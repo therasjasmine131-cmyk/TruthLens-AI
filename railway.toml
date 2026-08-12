@@ -12,7 +12,7 @@ rootDirectory = "backend"
 buildCommand = ""
 
 [deploy]
-startCommand = "cd backend 2>/dev/null || true; gunicorn -w 2 --timeout 120 -b 0.0.0.0:$PORT wsgi:app"
+startCommand = "gunicorn -w 2 --timeout 120 -b 0.0.0.0:$PORT wsgi:app"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
