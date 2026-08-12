@@ -8,7 +8,7 @@
   "deploy": {
     "runtime": "V2",
     "numReplicas": 1,
-    "startCommand": "PYTHONPATH=/app:/app/backend gunicorn -w 2 --timeout 120 -b 0.0.0.0:$PORT wsgi:app",
+    "startCommand": "gunicorn -w 2 --timeout 120 -b 0.0.0.0:$PORT --chdir /app/backend wsgi:app",
     "healthcheckPath": "/api/health",
     "sleepApplication": false,
     "useLegacyStacker": false,
