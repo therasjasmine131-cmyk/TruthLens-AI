@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, send_from_directory
 
 from .config import Config
 from .extensions import cors, db
@@ -77,6 +77,10 @@ def create_app(config_class=Config) -> Flask:
     @app.route("/", defaults={"path": ""})
     @app.route("/<path:path>")
     def spa_fallback(path):
-        return jsonify({"error": "Use the /api/ endpoints.", "status": "error"}), 404
+        static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "static")
+        target = os.path.join(static_dir, path)
+        if path and os.path.isfile(target):
+            return send_from_directory(static_dir, path)
+        return send_from_directory(static_dir, "index.html")
 
     return app
