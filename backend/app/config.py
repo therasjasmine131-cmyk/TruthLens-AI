@@ -33,10 +33,7 @@ class Config:
 
     CORS_ORIGINS = [
         o.strip()
-        for o in os.environ.get(
-            "CORS_ORIGINS",
-            "http://localhost:5173,http://localhost:3000,https://jazz-e55c.vercel.app",
-        ).split(",")
+        for o in os.environ.get("CORS_ORIGINS", "*").split(",")
         if o.strip()
     ]
 
