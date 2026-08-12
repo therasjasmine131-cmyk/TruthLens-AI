@@ -1,4 +1,7 @@
-const API_BASE = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+const API_BASE = (
+  import.meta.env.VITE_API_URL ||
+  "https://truthlens-ai-production-2093.up.railway.app"
+).replace(/\/$/, "");
 
 import type {
   AnalysisResult,
