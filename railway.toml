@@ -1,0 +1,19 @@
+# TruthLens AI backend deployment for Railway.
+#
+# 1. Push this repository to GitHub.
+# 2. On Railway: New Project -> Deploy from GitHub repo -> pick this repo.
+# 3. Add the environment variables from .env.example (Railway injects PORT).
+# 4. The ML artifacts in ml/artifacts/ ship with the repo, so the model is
+#    available without retraining.
+
+[build]
+builder = "NIXPACKS"
+rootDirectory = "backend"
+buildCommand = ""
+
+[deploy]
+startCommand = "gunicorn -w 2 --timeout 120 -b 0.0.0.0:$PORT wsgi:app"
+healthcheckPath = "/api/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

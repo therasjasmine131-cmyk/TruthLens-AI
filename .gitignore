@@ -1,0 +1,43 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# ---- Node / Vite ----
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.local
+npm-debug.log*
+yarn-error.log*
+
+# ---- Environment / secrets ----
+.env
+.env.local
+.env.production
+*.pem
+*.key
+
+# ---- ML raw datasets (too large to commit; loader downloads them) ----
+ml/data/raw/
+*.csv.bak
+
+# ---- Databases ----
+*.sqlite3
+*.db
+instance/
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
