@@ -15,6 +15,15 @@ from .probabilities import confidence_level, three_way_prediction
 from .settings_service import get as get_setting
 from .text_stats import compute_text_stats
 
+HEADLINE_ONLY_CAVEAT = (
+    "Headline-only analysis: with only a headline to work from, the model has "
+    "very little text and cannot verify real-world events. Treat this as a rough "
+    "guess, not a verdict. Verify with the full article and reliable sources."
+)
+
+_HEADLINE_ONLY_CAP = "Moderate Confidence"
+_HIGH_LEVELS = ("Very High Confidence", "High Confidence")
+
 
 def _model_info() -> dict:
     meta = model_manager.metadata()
@@ -45,6 +54,7 @@ def analyze(headline: str | None, article: str | None, *, save: bool = True) -> 
 
     headline = (headline or "").strip()
     article = (article or "").strip()
+    headline_only = not article
     combined = (headline + " " + article).strip()
 
     levels = get_setting("confidence_levels", Config.CONFIDENCE_LEVELS)
@@ -58,11 +68,17 @@ def analyze(headline: str | None, article: str | None, *, save: bool = True) -> 
     model_info = _model_info()
     prediction = result["prediction"]
 
+    level = confidence_level(result["confidence"], levels)
+    if headline_only and level in _HIGH_LEVELS:
+        level = _HEADLINE_ONLY_CAP
+
     payload = {
         "prediction": prediction,
         "confidence": result["confidence"],
-        "confidence_level": confidence_level(result["confidence"], levels),
+        "confidence_level": level,
         "confidence_bands": levels,
+        "headline_only": headline_only,
+        "caveat": HEADLINE_ONLY_CAVEAT if headline_only else None,
         "probabilities": result["probabilities"],
         "model_raw": result["model_raw"],
         "model": model_info["name"],
@@ -119,13 +135,19 @@ def analyze_headline_only(headline: str) -> dict:
 def build_report_data(record: Prediction) -> dict:
     """Assemble a full printable report for a stored prediction."""
     meta: dict[str, Any] = record.analysis_metadata or {}
+    headline_only = not (record.article_text or "").strip()
+    stored_level = meta.get("confidence_level", confidence_level(record.confidence))
+    if headline_only and stored_level in _HIGH_LEVELS:
+        stored_level = _HEADLINE_ONLY_CAP
     return {
         "history_id": record.id,
         "headline": record.headline,
         "article_text": record.article_text,
         "prediction": record.prediction,
         "confidence": record.confidence,
-        "confidence_level": meta.get("confidence_level", confidence_level(record.confidence)),
+        "confidence_level": stored_level,
+        "headline_only": headline_only,
+        "caveat": HEADLINE_ONLY_CAVEAT if headline_only else None,
         "probabilities": meta.get("probabilities") or {
             "real": record.real_probability,
             "fake": record.fake_probability,

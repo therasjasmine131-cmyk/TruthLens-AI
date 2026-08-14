@@ -11,6 +11,8 @@ import {
   HelpCircle,
   Brain,
   Info,
+  AlertTriangle,
+  Globe2,
 } from "lucide-react";
 import type { AnalysisResult } from "../../types";
 import { Card } from "../ui/Card";
@@ -89,6 +91,40 @@ export function ResultPanel({
 
   return (
     <div className="space-y-6 animate-fade-in">
+      {/* ---- Headline-only caveat ---- */}
+      {result.headline_only && (
+        <div className="flex items-start gap-2.5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
+          <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+          <span>
+            {result.caveat ??
+              "Headline-only analysis — with only a headline, the model has very little text to judge. Verify with the full article and reliable sources."}
+          </span>
+        </div>
+      )}
+
+      {/* ---- Live knowledge check (Gemini) ---- */}
+      {result.live_check && result.live_check.label && (
+        <Card>
+          <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+            <Globe2 size={16} className="text-primary-500" />
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                Live Knowledge Check
+              </h3>
+              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                Gemini cross-check against its knowledge of real-world reporting
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center">
+            <LiveCheckBadge label={result.live_check.label} confidence={result.live_check.confidence} />
+            <p className="flex-1 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+              {result.live_check.reasoning || "No reasoning returned."}
+            </p>
+          </div>
+        </Card>
+      )}
+
       {/* ---- Verdict + gauge ---- */}
       <Card className="overflow-hidden">
         <div className="grid gap-6 p-6 md:grid-cols-2">
@@ -267,6 +303,22 @@ function ModelField({ label, value }: { label: string; value: string }) {
     <div>
       <p className="text-[11px] text-slate-400 dark:text-slate-500">{label}</p>
       <p className="mt-0.5 font-medium text-slate-800 dark:text-slate-200">{value}</p>
+    </div>
+  );
+}
+
+function LiveCheckBadge({ label, confidence }: { label: string; confidence: number }) {
+  const styles: Record<string, string> = {
+    REAL: "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700/60 dark:bg-emerald-950/40 dark:text-emerald-300",
+    FAKE: "border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-700/60 dark:bg-rose-950/40 dark:text-rose-300",
+    UNVERIFIED: "border-slate-300 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300",
+  };
+  const Icon = label === "REAL" ? CheckCircle2 : label === "FAKE" ? XCircle : HelpCircle;
+  return (
+    <div className={`flex shrink-0 items-center gap-2 self-start rounded-full border px-3 py-1.5 text-xs font-semibold ${styles[label] ?? styles.UNVERIFIED}`}>
+      <Icon size={14} />
+      {label === "UNVERIFIED" ? "Cannot Verify" : label}
+      <span className="font-medium opacity-80">· {Math.round(confidence * 100)}%</span>
     </div>
   );
 }

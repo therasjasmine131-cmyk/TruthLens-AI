@@ -57,6 +57,14 @@ export interface ModelInfo {
   };
 }
 
+export interface LiveCheck {
+  available: boolean;
+  source?: string;
+  label: "REAL" | "FAKE" | "UNVERIFIED";
+  confidence: number;
+  reasoning: string;
+}
+
 export interface AnalysisResult {
   prediction: PredictionLabel;
   confidence: number;
@@ -72,6 +80,9 @@ export interface AnalysisResult {
   disclaimer: string;
   saved: boolean;
   history_id?: number;
+  headline_only?: boolean;
+  caveat?: string | null;
+  live_check?: LiveCheck | null;
 }
 
 export interface HistoryItem {
