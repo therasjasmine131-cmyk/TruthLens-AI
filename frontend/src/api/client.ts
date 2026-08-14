@@ -4,6 +4,7 @@ const API_BASE = (
 ).replace(/\/$/, "");
 
 import type {
+  AiTextResult,
   AnalysisResult,
   AnalyticsData,
   BatchResult,
@@ -15,6 +16,7 @@ import type {
   HistoryPage,
   ModelPerformanceData,
   SettingsData,
+  TrendingNewsResponse,
 } from "../types";
 
 
@@ -98,4 +100,11 @@ export const api = {
   settings: () => apiFetch<SettingsData>("/api/settings"),
   updateSettings: (patch: Partial<SettingsData>) =>
     apiFetch<SettingsData>("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
+  detectAiText: (text: string) =>
+    apiFetch<AiTextResult>("/api/detect-ai-text", {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    }),
+  trendingNews: (country = "us", pageSize = 12) =>
+    apiFetch<TrendingNewsResponse>(`/api/news/trending?country=${country}&pageSize=${pageSize}`),
 };

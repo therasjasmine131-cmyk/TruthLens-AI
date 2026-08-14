@@ -11,6 +11,7 @@ import {
   FlaskConical,
   GitCompareArrows,
   ScanText,
+  Newspaper,
   X,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
@@ -21,6 +22,7 @@ import type { HealthStatus } from "../../types";
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/analyze", label: "Analyze News", icon: ScanSearch },
+  { to: "/trending", label: "Trending News", icon: Newspaper },
   { to: "/history", label: "Prediction History", icon: History },
   { to: "/batch", label: "Batch Analysis", icon: ScanText },
   { to: "/compare", label: "Compare Analyses", icon: GitCompareArrows },

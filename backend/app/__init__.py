@@ -24,7 +24,7 @@ def create_app(config_class=Config) -> Flask:
     cors.init_app(app, resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}})
 
     from . import models  # noqa: F401  (register tables)
-    from .routes import analytics, analyze, batch, dataset, health, history, model_perf, samples, settings
+    from .routes import ai_detector, analytics, analyze, batch, dataset, health, history, model_perf, news, samples, settings
 
     for bp in (
         health.bp,
@@ -36,6 +36,8 @@ def create_app(config_class=Config) -> Flask:
         batch.bp,
         samples.bp,
         settings.bp,
+        ai_detector.bp,
+        news.bp,
     ):
         app.register_blueprint(bp)
 
@@ -51,6 +53,8 @@ def create_app(config_class=Config) -> Flask:
                     "POST /api/analyze",
                     "POST /api/analyze/headline",
                     "POST /api/batch/analyze",
+                    "POST /api/detect-ai-text",
+                    "GET  /api/news/trending",
                     "GET  /api/history",
                     "GET  /api/history/<id>",
                     "DELETE /api/history/<id>",

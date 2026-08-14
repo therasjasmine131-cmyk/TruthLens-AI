@@ -220,3 +220,36 @@ export interface SettingsData {
     moderate_min: number;
   };
 }
+
+export type AiTextLabel = "Likely AI" | "Likely Human" | "Uncertain";
+
+export interface AiTextResult {
+  ai_generated_score: number;
+  label: AiTextLabel;
+  backend: "heuristic" | "gemini" | "roberta";
+  signals: Record<string, number>;
+  input_chars: number;
+  gemini_score?: number;
+  transformer_score?: number;
+  warning?: string;
+  error?: string;
+  status?: string;
+}
+
+export interface NewsArticle {
+  id: number;
+  source: string;
+  author: string;
+  headline: string;
+  description: string;
+  article: string;
+  url: string;
+  image_url: string;
+  published_at: string;
+}
+
+export interface TrendingNewsResponse {
+  country: string;
+  total: number;
+  items: NewsArticle[];
+}

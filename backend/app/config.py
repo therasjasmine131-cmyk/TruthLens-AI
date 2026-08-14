@@ -15,6 +15,31 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 INSTANCE_DIR = BACKEND_DIR / "instance"
 
 
+def _load_dotenv(path: Path) -> None:
+    """Minimal .env loader (no external dependency).
+
+    Existing environment variables win over .env values. Only simple
+    ``KEY=VALUE`` lines and ``#`` comments are supported; values may be
+    wrapped in single or double quotes.
+    """
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if not key:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+
+_load_dotenv(REPO_ROOT / ".env")
+
+
 def _env_bool(name: str, default: bool = False) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -42,6 +67,12 @@ class Config:
 
     MAX_ARTICLE_LENGTH = int(os.environ.get("MAX_ARTICLE_LENGTH", "12000"))
     MAX_HEADLINE_LENGTH = int(os.environ.get("MAX_HEADLINE_LENGTH", "500"))
+
+    # External API keys (loaded from .env; never commit the real values).
+    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+    GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
+    NEWSAPI_KEY = os.environ.get("NEWSAPI_KEY", "")
+    NEWSAPI_BASE_URL = os.environ.get("NEWSAPI_BASE_URL", "https://newsapi.org/v2")
 
     # Confidence-level bands (fractions, applied to the model confidence).
     CONFIDENCE_LEVELS = {

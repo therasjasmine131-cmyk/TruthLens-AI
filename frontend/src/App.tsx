@@ -11,6 +11,7 @@ import { Compare } from "./pages/Compare";
 import { Methodology } from "./pages/Methodology";
 import { Settings } from "./pages/Settings";
 import { Report } from "./pages/Report";
+import { TrendingNews } from "./pages/TrendingNews";
 import { NotFound } from "./pages/NotFound";
 
 export default function App() {
@@ -25,6 +26,7 @@ export default function App() {
         <Route path="/dataset" element={<DatasetExplorer />} />
         <Route path="/batch" element={<Batch />} />
         <Route path="/compare" element={<Compare />} />
+        <Route path="/trending" element={<TrendingNews />} />
         <Route path="/methodology" element={<Methodology />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/report/:id" element={<Report />} />
