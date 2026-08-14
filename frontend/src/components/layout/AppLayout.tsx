@@ -12,7 +12,7 @@ export function AppLayout() {
     <div className="flex min-h-screen">
       <Sidebar mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col lg:pl-60">
         {/* Mobile top bar */}
         <header className="sticky top-0 z-40 flex items-center justify-between border-b border-slate-200 bg-white/80 px-4 py-3 backdrop-blur dark:border-slate-800 dark:bg-[#0B1120]/80 lg:hidden">
           <div className="flex items-center gap-2">

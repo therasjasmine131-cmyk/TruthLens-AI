@@ -110,7 +110,7 @@ export function Sidebar({ mobileOpen, onClose }: { mobileOpen: boolean; onClose:
   return (
     <>
       {/* Desktop */}
-      <aside className="hidden h-screen w-60 shrink-0 bg-[#0B1120] lg:block">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 bg-[#0B1120] lg:block">
         <SidebarContent />
       </aside>
 
