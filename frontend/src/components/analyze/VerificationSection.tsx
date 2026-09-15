@@ -10,10 +10,20 @@ import {
   Lightbulb,
   Layers,
   FileSearch,
+  Bot,
+  AlertTriangle,
+  Eye,
+  EyeOff,
 } from "lucide-react";
-import type { Verdict, Verification, VerificationClaim, VerificationEvidence } from "../../types";
+import type { AiStageDecision, ClaimStages, Verdict, Verification, VerificationClaim, VerificationEvidence } from "../../types";
 import { Card } from "../ui/Card";
 import { cn } from "../../lib/utils";
+
+const AI_DECISION_META: Record<AiStageDecision, { color: string; bg: string }> = {
+  SUPPORT: { color: "text-emerald-700 dark:text-emerald-300", bg: "bg-emerald-50 dark:bg-emerald-950/60" },
+  CONTRADICT: { color: "text-rose-700 dark:text-rose-300", bg: "bg-rose-50 dark:bg-rose-950/60" },
+  INSUFFICIENT: { color: "text-amber-700 dark:text-amber-300", bg: "bg-amber-50 dark:bg-amber-950/60" },
+};
 
 const VERDICT_META: Record<Verdict, { label: string; color: string; bg: string; border: string; icon: typeof CheckCircle2 }> = {
   REAL: {
@@ -80,9 +90,77 @@ function ConfidenceBar({ confidence, verdict }: { confidence: number; verdict: V
   );
 }
 
-function ClaimRow({ claim }: { claim: VerificationClaim }) {
+function AiChip({ label, decision, confidence }: { label: string; decision: AiStageDecision; confidence: number }) {
+  const meta = AI_DECISION_META[decision];
+  return (
+    <span className={cn("inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] font-semibold", meta.color, meta.bg, "border-current/20")}>
+      <Bot size={10} />
+      {label}: {decision} · {Math.round(confidence * 100)}%
+    </span>
+  );
+}
+
+const STAGE_KEYS = ["ML_RESULT", "EVIDENCE_RESULT", "AI_RESULT_1", "AI_REVIEW_RESULT", "FINAL_RESULT"] as const;
+
+function StStageRow({ name, value }: { name: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-slate-100 py-1 last:border-0 dark:border-slate-800">
+      <span className="font-mono text-[10px] font-semibold text-slate-400 dark:text-slate-500">{name}</span>
+      <span className="max-w-[75%] text-right text-[11px] text-slate-700 dark:text-slate-300">{value || "—"}</span>
+    </div>
+  );
+}
+
+function StagesTable({ stages }: { stages: ClaimStages }) {
+  const rows: [string, string][] = [
+    [
+      "ML_RESULT",
+      stages.ML_RESULT
+        ? `${stages.ML_RESULT.prediction ?? "n/a"} (${stages.ML_RESULT.confidence != null ? Math.round(stages.ML_RESULT.confidence * 100) : "n/a"}%)`
+        : "not available",
+    ],
+    [
+      "EVIDENCE_RESULT",
+      stages.EVIDENCE_RESULT
+        ? `${stages.EVIDENCE_RESULT.verdict} · ${stages.EVIDENCE_RESULT.supporting_count} support / ${stages.EVIDENCE_RESULT.contradicting_count} contra${stages.EVIDENCE_RESULT.independent_sources ? " · independent" : ""}`
+        : "no evidence found",
+    ],
+    [
+      "AI_RESULT_1",
+      stages.AI_RESULT_1 ? `${stages.AI_RESULT_1.decision} (${Math.round(stages.AI_RESULT_1.confidence * 100)}%)` : "not configured",
+    ],
+    [
+      "AI_REVIEW_RESULT",
+      stages.AI_REVIEW_RESULT
+        ? `${stages.AI_REVIEW_RESULT.verdict} (${Math.round(stages.AI_REVIEW_RESULT.confidence * 100)}%)${stages.AI_REVIEW_RESULT.agrees_with_first ? "" : " · disagrees with AI#1"}`
+        : "not configured",
+    ],
+    [
+      "FINAL_RESULT",
+      stages.FINAL_RESULT
+        ? `${stages.FINAL_RESULT.verdict} (${Math.round(stages.FINAL_RESULT.confidence * 100)}%) · ${stages.FINAL_RESULT.authority}`
+        : "—",
+    ],
+  ];
+  return (
+    <div className="mt-3 rounded-md border border-indigo-100 bg-indigo-50/40 px-3 py-2 dark:border-indigo-900/50 dark:bg-indigo-950/20">
+      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-indigo-400 dark:text-indigo-300">
+        Developer · stage results
+      </p>
+      {rows.map(([name, value]) => (
+        <StStageRow key={name} name={name} value={value} />
+      ))}
+    </div>
+  );
+}
+
+function ClaimRow({ claim, showStages }: { claim: VerificationClaim; showStages: boolean }) {
   const [open, setOpen] = useState(false);
   const evidenceItems = claim.evidence ?? [];
+  const ai1 = claim.ai_analysis_1;
+  const ai2 = claim.ai_review;
+  const hasAi = ai1 != null || ai2 != null;
+  const conflicts = claim.conflicts ?? [];
   return (
     <div className="rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-[#111a2e]">
       <button
@@ -97,34 +175,94 @@ function ClaimRow({ claim }: { claim: VerificationClaim }) {
           <p className="mt-1 line-clamp-2 text-[11px] text-slate-500 dark:text-slate-400">
             {claim.reason}
           </p>
-          {claim.type && (
-            <span className="mt-1 inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-              {claim.type}
-            </span>
-          )}
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            {claim.type && (
+              <span className="inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                {claim.type}
+              </span>
+            )}
+            {claim.final_authority && (
+              <span className="inline-block rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-300">
+                final: {claim.final_verdict ?? claim.verdict} · {claim.final_authority}
+              </span>
+            )}
+          </div>
         </div>
         <span className="shrink-0 text-slate-400">
           {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
         </span>
       </button>
 
-      {open && evidenceItems.length > 0 && (
+      {open && (
         <div className="border-t border-slate-100 px-4 pb-4 pt-3 dark:border-slate-800">
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
-            Supporting evidence ({evidenceItems.length})
-          </p>
-          <div className="space-y-2">
-            {evidenceItems.map((ev: Record<string, unknown>, idx: number) => (
-              <EvidenceRow key={idx} evidence={ev as unknown as VerificationEvidence} />
-            ))}
-          </div>
-        </div>
-      )}
-      {open && evidenceItems.length === 0 && (
-        <div className="border-t border-slate-100 px-4 pb-4 pt-3 dark:border-slate-800">
-          <p className="text-xs text-slate-400 dark:text-slate-500">
-            No evidence was retrieved for this claim in the current configuration.
-          </p>
+          {evidenceItems.length > 0 && (
+            <>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                Supporting evidence ({evidenceItems.length})
+              </p>
+              <div className="space-y-2">
+                {evidenceItems.map((ev: Record<string, unknown>, idx: number) => (
+                  <EvidenceRow key={idx} evidence={ev as unknown as VerificationEvidence} />
+                ))}
+              </div>
+            </>
+          )}
+          {evidenceItems.length === 0 && (
+            <p className="text-xs text-slate-400 dark:text-slate-500">
+              No evidence was retrieved for this claim in the current configuration.
+            </p>
+          )}
+
+          {(hasAi || conflicts.length > 0) && (
+            <div className="mt-3 rounded-md border border-slate-100 p-3 dark:border-slate-800">
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                AI analysis
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                {ai1 && <AiChip label="AI#1" decision={ai1.decision} confidence={ai1.confidence} />}
+                {ai2 && (
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] font-semibold",
+                      ai2.agrees_with_first
+                        ? "text-emerald-700 dark:text-emerald-300"
+                        : "text-rose-700 dark:text-rose-300",
+                      ai2.agrees_with_first
+                        ? "bg-emerald-50 dark:bg-emerald-950/60"
+                        : "bg-rose-50 dark:bg-rose-950/60",
+                    )}
+                  >
+                    <Bot size={10} />
+                    AI#2 {ai2.verdict} · {Math.round(ai2.confidence * 100)}%
+                    {ai2.agrees_with_first ? " · agrees" : " · disagrees"}
+                  </span>
+                )}
+                {ai1?.reasoning && (
+                  <span className="text-[11px] italic text-slate-500 dark:text-slate-400">{ai1.reasoning}</span>
+                )}
+              </div>
+              {ai2 && ai2.problems.length > 0 && (
+                <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-300">
+                  Reviewer notes: {ai2.problems.join("; ")}
+                </p>
+              )}
+              {conflicts.length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {conflicts.map((conflict, idx) => (
+                    <li
+                      key={idx}
+                      className="flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-300"
+                    >
+                      <AlertTriangle size={11} className="mt-0.5 shrink-0" />
+                      {conflict}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {showStages && claim.stages && <StagesTable stages={claim.stages} />}
         </div>
       )}
     </div>
@@ -187,10 +325,12 @@ function EvidenceRow({ evidence }: { evidence: VerificationEvidence }) {
 
 export function VerificationSection({ verification }: { verification: Verification }) {
   const [showMatrix, setShowMatrix] = useState(false);
+  const [showStages, setShowStages] = useState(false);
   const overall = verification.overall;
   const claims = verification.claims ?? [];
   const matrix = verification.evidence_matrix ?? [];
   const pipeline = verification.pipeline;
+  const pipelineStages = verification.stages?.PIPELINE ?? null;
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -224,6 +364,30 @@ export function VerificationSection({ verification }: { verification: Verificati
                 <Lightbulb size={11} />
                 ML used as secondary signal
               </span>
+              {pipeline.ai_used && (
+                <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                  <Bot size={11} />
+                  AI analysis · {pipeline.ai_claims_analyzed ?? 0} claim{pipeline.ai_claims_analyzed !== 1 ? "s" : ""}
+                </span>
+              )}
+              {pipeline.ai_used === false && (
+                <span className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 dark:bg-slate-800">
+                  <Bot size={11} />
+                  AI stages not configured
+                </span>
+              )}
+              <button
+                onClick={() => setShowStages((v) => !v)}
+                className={cn(
+                  "inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-medium transition-colors",
+                  showStages
+                    ? "border-indigo-300 bg-indigo-50 text-indigo-600 dark:border-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300"
+                    : "border-slate-200 text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800",
+                )}
+              >
+                {showStages ? <EyeOff size={11} /> : <Eye size={11} />}
+                Developer: stages
+              </button>
             </div>
           </div>
         </div>
@@ -247,6 +411,43 @@ export function VerificationSection({ verification }: { verification: Verificati
             <span className="text-[10px] text-slate-400">Unverified</span>
           </div>
         </div>
+        {showStages && pipelineStages && (
+          <div className="border-t border-slate-200 px-4 py-3 dark:border-slate-800">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+              Pipeline stages
+            </p>
+            <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px] font-mono text-slate-500 dark:text-slate-400">
+              {pipelineStages.map((stage, idx) => (
+                <span key={stage} className="inline-flex items-center gap-1">
+                  {idx > 0 && <span className="text-slate-300 dark:text-slate-600">→</span>}
+                  <span
+                    className={cn(
+                      "rounded px-1.5 py-0.5",
+                      idx === pipelineStages.length - 1
+                        ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+                        : "bg-slate-100 dark:bg-slate-800",
+                    )}
+                  >
+                    {stage}
+                  </span>
+                </span>
+              ))}
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
+              {STAGE_KEYS.map((name) => {
+                const count = claims.filter((c) => c.stages && c.stages[name] != null).length;
+                return (
+                  <div key={name} className="rounded border border-slate-100 px-2 py-1 text-center dark:border-slate-800">
+                    <span className="block text-[9px] font-mono font-semibold uppercase text-slate-400">{name}</span>
+                    <span className="block text-[11px] font-semibold text-slate-700 dark:text-slate-200">
+                      {count}/{claims.length}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* Claims */}
@@ -262,7 +463,7 @@ export function VerificationSection({ verification }: { verification: Verificati
           </div>
           <div className="space-y-3 p-5">
             {claims.map((claim, idx) => (
-              <ClaimRow key={idx} claim={claim} />
+              <ClaimRow key={idx} claim={claim} showStages={showStages} />
             ))}
           </div>
         </Card>

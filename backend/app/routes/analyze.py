@@ -34,7 +34,8 @@ def analyze_article():
     headline = data.get("headline")
     article = data.get("article")
     save = bool(data.get("save", True))
-    result = analyze(headline, article, save=save)
+    debug = (request.args.get("debug") or "").strip().lower() in {"1", "true", "yes", "on"}
+    result = analyze(headline, article, save=save, include_debug=debug)
     result["live_check"] = _live_check(headline, article)
     return jsonify(result)
 
@@ -46,6 +47,7 @@ def analyze_headline():
     headline = data.get("headline")
     if not headline or not headline.strip():
         return jsonify({"error": "A headline is required.", "status": "error"}), 400
-    result = analyze_headline_only(headline)
+    debug = (request.args.get("debug") or "").strip().lower() in {"1", "true", "yes", "on"}
+    result = analyze_headline_only(headline, include_debug=debug)
     result["live_check"] = _live_check(headline, None)
     return jsonify(result)

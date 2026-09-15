@@ -82,6 +82,42 @@ export interface VerificationEvidence {
   retrieved_from: string;
 }
 
+export type AiStageDecision = "SUPPORT" | "CONTRADICT" | "INSUFFICIENT";
+
+export interface AiAnalysis1 {
+  available: boolean;
+  source: string;
+  model?: string;
+  decision: AiStageDecision;
+  confidence: number;
+  reasoning: string;
+}
+
+export interface AiReview {
+  available: boolean;
+  source: string;
+  model?: string;
+  verdict: AiStageDecision;
+  confidence: number;
+  agrees_with_first: boolean;
+  problems: string[];
+  reasoning: string;
+}
+
+export interface ClaimStages {
+  ML_RESULT?: { prediction: string | null; confidence: number | null };
+  EVIDENCE_RESULT?: {
+    verdict: Verdict;
+    confidence: number;
+    supporting_count: number;
+    contradicting_count: number;
+    independent_sources: boolean;
+  };
+  AI_RESULT_1?: AiAnalysis1 | null;
+  AI_REVIEW_RESULT?: AiReview | null;
+  FINAL_RESULT?: { verdict: Verdict; confidence: number; authority: string };
+}
+
 export interface VerificationClaim {
   text: string;
   type: string;
@@ -100,6 +136,24 @@ export interface VerificationClaim {
     independent_contradiction: boolean;
   };
   ml?: { prediction: string; confidence: number } | null;
+  ml_prediction?: string | null;
+  ml_confidence?: number | null;
+  ai_analysis_1?: AiAnalysis1 | null;
+  ai_review?: AiReview | null;
+  conflicts?: string[];
+  final_verdict?: Verdict;
+  final_confidence?: number;
+  final_authority?: string;
+  supporting_counts?: number;
+  contradicting_counts?: number;
+  source_credibility?: {
+    items: number;
+    distinct_domains: number;
+    avg_source_quality: number;
+    tiers: Record<string, number>;
+    independent: boolean;
+  };
+  stages?: ClaimStages | null;
 }
 
 export interface VerificationOverall {
@@ -123,7 +177,17 @@ export interface Verification {
     evidence_items: number;
     sources_used: string[];
     live_evidence_used: boolean;
+    ai_used?: boolean;
+    ai_claims_analyzed?: number;
+    ai_reviews_completed?: number;
   };
+  stages?: {
+    PIPELINE: string[];
+    claims_analyzed: number;
+    ai_available: boolean;
+    ai_claims: number;
+    agreement: Record<string, unknown>;
+  } | null;
   ml_article?: { prediction: string; confidence: number; probabilities: { real: number; fake: number } } | null;
 }
 

@@ -166,6 +166,155 @@ def verdict_for_claim(claim: dict, ml: dict, classified_evidence: list[dict]) ->
     }
 
 
+AI_VERDICT_MAP = {
+    "SUPPORT": VERDICT_REAL,
+    "CONTRADICT": VERDICT_FALSE,
+    "INSUFFICIENT": VERDICT_UNVERIFIED,
+}
+
+
+def final_decision_for_claim(
+    claim: dict,
+    ml: dict | None,
+    classified_evidence: list[dict],
+    cross_source: dict | None,
+    ai1: dict | None,
+    ai2: dict | None,
+) -> dict:
+    """Multi-stage final decision for one atomic claim.
+
+    Priority order (ML is the *lowest* authority - it never decides alone):
+
+    1. strong direct credible evidence (with source independence)
+    2. AI evidence analysis #1 (+ adversarial review #2 when they agree)
+    3. ML prediction is examined for conflict but never overrides strong facts
+
+    Degrades cleanly: when AI stages are unavailable the result is exactly the
+    evidence-driven verdict (``verdict_for_claim``), preserving offline use.
+    """
+    base = verdict_for_claim(claim, ml, classified_evidence)
+    verdict = base["verdict"]
+    confidence = base["confidence"]
+    label = base["confidence_label"]
+    reason = base["reason"]
+    authority = "none"
+    conflicts: list[str] = []
+
+    signal = base.get("signal", {})
+    support = signal.get("support", 0.0)
+    contradict = signal.get("contradict", 0.0)
+    n_support = signal.get("supporting_counts", 0)
+    n_contradict = signal.get("contradicting_counts", 0)
+    strong = support >= STRONG_THRESHOLD or abs(contradict) >= STRONG_THRESHOLD
+    cross_source = cross_source or {}
+    independent = bool(
+        cross_source.get("independent_support") or cross_source.get("independent_contradiction")
+    )
+
+    ai_decision = (ai1 or {}).get("decision") if (ai1 or {}).get("available") else None
+    ai_review = (ai2 or {}).get("verdict") if (ai2 or {}).get("available") else None
+    ai_verdict = AI_VERDICT_MAP.get(ai_decision) if ai_decision else None
+    ai_review_verdict = AI_VERDICT_MAP.get(ai_review) if ai_review else None
+    ai_agree = bool(ai_decision and ai_review and ai_decision == ai_review)
+
+    ml_pred = (ml or {}).get("prediction")
+
+    if ml_pred in (VERDICT_REAL, VERDICT_FALSE) and verdict in (VERDICT_REAL, VERDICT_FALSE) \
+            and ml_pred != verdict:
+        conflicts.append(
+            f"ML classifier leans {ml_pred} while evidence/AI suggest {verdict} - "
+            "disagreement flagged for investigation."
+        )
+    if ai_verdict and verdict in (VERDICT_REAL, VERDICT_FALSE) and ai_verdict != verdict:
+        conflicts.append(
+            f"The AI analysis leaned {ai_verdict} but the confirmed verdict is {verdict}."
+        )
+    if ai_decision and ai_review and ai_decision != ai_review:
+        conflicts.append(
+            "The AI reviewer disagreed with AI analysis #1; evidence was used to resolve it."
+        )
+
+    def _ai_confidence() -> float:
+        confs = [(ai1 or {}).get("confidence", 0.5)]
+        if ai_agree:
+            confs.append((ai2 or {}).get("confidence", 0.5))
+        return min(0.95, 0.55 + 0.38 * (sum(confs) / len(confs)))
+
+    if verdict in (VERDICT_REAL, VERDICT_FALSE):
+        if strong:
+            authority = "evidence"
+            if independent:
+                confidence = min(0.98, confidence + 0.02)
+            if ai_verdict == verdict:
+                authority = "evidence+ai"
+                confidence = min(0.98, 0.5 * confidence + 0.5 * _ai_confidence())
+        elif ai_verdict is None:
+            authority = "evidence"
+        elif ai_verdict == verdict:
+            authority = "evidence+ai"
+            confidence = min(0.95, 0.55 * confidence + 0.45 * _ai_confidence())
+        elif ai_verdict != verdict:
+            verdict = VERDICT_UNVERIFIED
+            confidence = 0.45
+            label = "Evidence vs AI conflict"
+            authority = "none"
+            conflicts.append(
+                "Evidence here is weak and the AI analysis disagrees with it; "
+                "too uncertain for a firm verdict."
+            )
+            reason = ("The retrieved evidence is not strong enough to override the "
+                      "conflicting AI analysis, so the claim stays unverified pending "
+                      "better sources.")
+    elif ai_decision:
+        if ai_verdict == VERDICT_UNVERIFIED:
+            authority = "none"
+        elif ai_review is None or ai_agree:
+            verdict = ai_verdict
+            authority = "ai"
+            confidence = _ai_confidence()
+            label = _confidence_label(confidence)
+            reason = _ai_reason(claim, ai_verdict, ai1, ai2, ai_agree)
+        else:
+            authority = "none"
+            conflicts.append(
+                "AI analysis #1 and the reviewer disagreed; the claim stays unverified."
+            )
+        if verdict == VERDICT_UNVERIFIED and not (n_support or n_contradict) \
+                and label == "No live evidence retrieved":
+            label = "No evidence retrieved"
+    else:
+        authority = "none"
+
+    return {
+        "verdict": verdict,
+        "confidence": round(confidence, 2),
+        "confidence_label": label,
+        "reason": reason,
+        "signal": signal,
+        "authority": authority,
+        "base_verdict": base["verdict"],
+        "strong_evidence": strong,
+        "independent_sources": independent,
+        "conflicts": conflicts,
+        "support": round(support, 3),
+        "contradict": round(contradict, 3),
+    }
+
+
+def _ai_reason(claim: dict, ai_verdict: str, ai1: dict | None,
+               ai2: dict | None, ai_agree: bool) -> str:
+    conf_txt = f"{round(((ai1 or {}).get('confidence', 0.5)) * 100)}%"
+    if ai_verdict == VERDICT_REAL:
+        msg = f"AI analysis of the retrieved evidence supports the claim ({conf_txt} confident)."
+    elif ai_verdict == VERDICT_FALSE:
+        msg = f"AI analysis of the retrieved evidence contradicts the claim ({conf_txt} confident)."
+    else:
+        msg = "AI analysis found the retrieved evidence insufficient to decide."
+    if ai_agree and ai_verdict != VERDICT_UNVERIFIED:
+        msg += " An adversarial reviewer agrees."
+    return msg
+
+
 def _real_reason(claim: dict, classified_evidence: list[dict]) -> str:
     evs = [e for e in classified_evidence if e["relation"] == "SUPPORTS"]
     evs.sort(key=lambda e: e["significance"], reverse=True)

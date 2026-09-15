@@ -30,7 +30,8 @@ def _article_ml(headline: str | None, article: str | None) -> dict | None:
         return None
 
 
-def run_verification(headline: str | None, article: str | None) -> dict | None:
+def run_verification(headline: str | None, article: str | None,
+                     include_debug: bool = False) -> dict | None:
     """Run the evidence pipeline. Returns None only if there is no text.
 
     ``verify_text`` already joins headline+text itself, so pass article as the
@@ -40,7 +41,7 @@ def run_verification(headline: str | None, article: str | None) -> dict | None:
     if not (headline or "").strip() and body is None:
         return None
     try:
-        report = verify_text(body, headline=headline)
+        report = verify_text(body, headline=headline, include_debug=include_debug)
     except Exception:  # noqa: BLE001 - evidence failures degrade, not crash
         logger.exception("verification pipeline failed")
         report = {

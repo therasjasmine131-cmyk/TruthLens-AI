@@ -49,7 +49,8 @@ def _model_info() -> dict:
     }
 
 
-def analyze(headline: str | None, article: str | None, *, save: bool = True) -> dict:
+def analyze(headline: str | None, article: str | None, *, save: bool = True,
+            include_debug: bool = False) -> dict:
     """Run the full analysis pipeline and return a JSON-safe result."""
     validate_inputs(headline, article)
 
@@ -73,7 +74,7 @@ def analyze(headline: str | None, article: str | None, *, save: bool = True) -> 
     if headline_only and level in _HIGH_LEVELS:
         level = _HEADLINE_ONLY_CAP
 
-    verification = run_verification(headline, article)
+    verification = run_verification(headline, article, include_debug=include_debug)
     overall_verdict = None
     no_evidence_overall = None
     if verification:
@@ -131,6 +132,7 @@ def analyze(headline: str | None, article: str | None, *, save: bool = True) -> 
                     "explanation": explanation,
                     "model_info": model_info,
                     "confidence_level": payload["confidence_level"],
+                    "verification": verification,
                 },
             )
             db.session.add(record)
@@ -145,9 +147,9 @@ def analyze(headline: str | None, article: str | None, *, save: bool = True) -> 
     return payload
 
 
-def analyze_headline_only(headline: str) -> dict:
+def analyze_headline_only(headline: str, *, include_debug: bool = False) -> dict:
     """Analyze using just a headline (article text is empty)."""
-    return analyze(headline, None)
+    return analyze(headline, None, include_debug=include_debug)
 
 
 def build_report_data(record: Prediction) -> dict:
