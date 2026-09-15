@@ -21,6 +21,7 @@ import { PredictionBadge } from "../ui/PredictionBadge";
 import { ConfidenceGauge } from "../charts/ConfidenceGauge";
 import { HorizontalBars, ExplanationBars } from "../charts/HorizontalBars";
 import { Disclaimer } from "../ui/PageHeader";
+import { VerificationSection } from "./VerificationSection";
 import { formatPercent } from "../../lib/utils";
 
 const STAT_META: { key: keyof AnalysisResult["article_stats"]; label: string }[] = [
@@ -125,8 +126,19 @@ export function ResultPanel({
         </Card>
       )}
 
-      {/* ---- Verdict + gauge ---- */}
+      {/* ---- Evidence-based verification ---- */}
+      {result.verification && <VerificationSection verification={result.verification} />}
+
+      {/* ---- Legacy ML verdict + gauge ---- */}
       <Card className="overflow-hidden">
+        <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+          <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+            ML Classifier Output
+          </h3>
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+            Secondary stylistic signal from the trained classifier. Verdicts above are evidence-driven.
+          </p>
+        </div>
         <div className="grid gap-6 p-6 md:grid-cols-2">
           <div className="flex flex-col items-center justify-center gap-3">
             <div className="flex flex-col items-center gap-2">
@@ -145,12 +157,26 @@ export function ResultPanel({
             </p>
             <ProbCard label="REAL" value={probs.real} icon={CheckCircle2} tone="text-emerald-600 dark:text-emerald-400" />
             <ProbCard label="FAKE" value={probs.fake} icon={XCircle} tone="text-rose-600 dark:text-rose-400" />
-            <ProbCard label="UNCERTAIN" value={probs.uncertain} icon={HelpCircle} tone="text-amber-600 dark:text-amber-400" />
+
+            {result.prediction === "UNCERTAIN" && (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
+                <HelpCircle size={13} className="mt-0.5 shrink-0" />
+                <span>
+                  <strong>UNCERTAIN (abstain):</strong> the model's top-class
+                  probability ({(result.confidence * 100).toFixed(1)}%) was below
+                  the {Math.round((result.uncertain_threshold ?? 0.78) * 100)}%
+                  tolerances, so TruthLens declined to call REAL or FAKE. This is
+                  a decision, not a third probability.
+                </span>
+              </div>
+            )}
 
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-500 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400">
-              Raw model output — real: {formatPercent(result.model_raw?.p_real ?? 0)}, fake:{" "}
-              {formatPercent(result.model_raw?.p_fake ?? 0)}. The residual margin is assigned to the
-              UNCERTAIN class when the model is undecided.
+              Raw model probabilities (binary classifier): REAL{" "}
+              {formatPercent(result.model_raw?.p_real ?? probs.real)}, FAKE{" "}
+              {formatPercent(result.model_raw?.p_fake ?? probs.fake)} — together
+              100%. UNCERTAIN is an abstain decision when the model is unsure; it
+              is never manufactured by subtracting from these probabilities.
             </div>
           </div>
         </div>
@@ -250,7 +276,7 @@ export function ResultPanel({
             <Brain size={16} className="text-primary-500" />
             <div>
               <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                Why did the model make this prediction?
+                Model-Associated Features
               </h3>
               <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
                 {result.explanation?.direction_label}
@@ -276,7 +302,7 @@ export function ResultPanel({
         <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
           <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Model Information</h3>
         </div>
-        <div className="grid grid-cols-2 gap-x-4 gap-y-3 p-5 text-xs sm:grid-cols-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-3 p-5 pb-2 text-xs sm:grid-cols-3 lg:grid-cols-4">
           <ModelField label="Model Used" value={result.model} />
           <ModelField label="Vectorizer" value={result.model_info?.vectorizer ?? "—"} />
           <ModelField label="Training Dataset" value={result.model_info?.dataset_source ?? "—"} />
@@ -287,6 +313,21 @@ export function ResultPanel({
             label="Training Date"
             value={result.model_info?.training_date ? new Date(result.model_info.training_date).toLocaleDateString() : "—"}
           />
+          <ModelField label="Explainability" value={result.model_info?.explainability ?? "—"} />
+        </div>
+
+        <div className="border-t border-slate-200 px-5 py-4 dark:border-slate-800">
+          <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+            Model Performance on Test Dataset
+          </h3>
+          <p className="mt-0.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+            These scores were measured on a held-out test set that was not used to train the
+            model (a stratified split, with TF-IDF fitted on the training folds only). They
+            describe the model's performance on the training corpus, <strong className="font-medium">not</strong> a
+            guarantee of accuracy on real-world news.
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-3 px-5 pb-5 text-xs sm:grid-cols-3 lg:grid-cols-4">
           <ModelField label="Accuracy" value={result.model_info?.metrics?.accuracy != null ? formatPercent(result.model_info.metrics.accuracy) : "—"} />
           <ModelField label="Precision" value={result.model_info?.metrics?.precision != null ? formatPercent(result.model_info.metrics.precision) : "—"} />
           <ModelField label="Recall" value={result.model_info?.metrics?.recall != null ? formatPercent(result.model_info.metrics.recall) : "—"} />

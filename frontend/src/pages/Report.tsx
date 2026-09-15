@@ -154,6 +154,11 @@ h1{font-size:20px}h2{font-size:15px;margin-top:24px;border-bottom:2px solid #eef
             <div className="metric"><span>FAKE</span><b>{formatPercent(data.probabilities.fake)}</b></div>
             <div className="metric"><span>UNCERTAIN</span><b>{formatPercent(data.probabilities.uncertain)}</b></div>
           </div>
+          <p className="text-[11px] text-slate-500">
+            REAL and FAKE are the raw binary classifier probabilities and sum to 100%. UNCERTAIN is
+            an abstain decision made when the model's confidence is low (top probability below 78%)
+            — it is not a manufactured probability.
+          </p>
 
           {/* Stats */}
           <h2>Article Statistics</h2>
@@ -211,8 +216,22 @@ h1{font-size:20px}h2{font-size:15px;margin-top:24px;border-bottom:2px solid #eef
               <tr><td>Training Samples</td><td>{Number(data.model_info?.train_samples ?? 0).toLocaleString()}</td></tr>
               <tr><td>Test Samples</td><td>{Number(data.model_info?.test_samples ?? 0).toLocaleString()}</td></tr>
               <tr><td>Number of Features</td><td>{Number(data.model_info?.n_features ?? 0).toLocaleString()}</td></tr>
-              <tr><td>Accuracy</td><td>{modelMetrics.accuracy != null ? formatPercent(modelMetrics.accuracy) : "—"}</td></tr>
+            </tbody>
+          </table>
+
+          <h2>Model Performance on Test Dataset</h2>
+          <p className="text-xs text-slate-500">
+            Measured on a held-out test set that was not used to train the model (stratified split,
+            TF-IDF fitted on training folds only). This is not a guarantee of accuracy on
+            real-world news.
+          </p>
+          <table>
+            <tbody>
+              <tr><td className="w-1/2">Accuracy</td><td>{modelMetrics.accuracy != null ? formatPercent(modelMetrics.accuracy) : "—"}</td></tr>
+              <tr><td>Precision</td><td>{modelMetrics.precision != null ? formatPercent(modelMetrics.precision) : "—"}</td></tr>
+              <tr><td>Recall</td><td>{modelMetrics.recall != null ? formatPercent(modelMetrics.recall) : "—"}</td></tr>
               <tr><td>F1 Score</td><td>{modelMetrics.f1 != null ? formatPercent(modelMetrics.f1) : "—"}</td></tr>
+              <tr><td>ROC-AUC</td><td>{modelMetrics.roc_auc != null ? Number(modelMetrics.roc_auc).toFixed(4) : "—"}</td></tr>
             </tbody>
           </table>
 

@@ -1,0 +1,42 @@
+{
+  "model": "Linear SVM (word 1-2g)",
+  "accuracy": 0.970954356846473,
+  "classification_report": {
+    "FAKE": {
+      "precision": 0.9596774193548387,
+      "recall": 0.9834710743801653,
+      "f1-score": 0.9714285714285714,
+      "support": 121.0
+    },
+    "REAL": {
+      "precision": 0.9829059829059829,
+      "recall": 0.9583333333333334,
+      "f1-score": 0.9704641350210971,
+      "support": 120.0
+    },
+    "accuracy": 0.970954356846473,
+    "macro avg": {
+      "precision": 0.9712917011304107,
+      "recall": 0.9709022038567494,
+      "f1-score": 0.9709463532248342,
+      "support": 241.0
+    },
+    "weighted avg": {
+      "precision": 0.9712435090898484,
+      "recall": 0.970954356846473,
+      "f1-score": 0.970948354130244,
+      "support": 241.0
+    }
+  },
+  "confusion_matrix": [
+    [
+      119,
+      2
+    ],
+    [
+      5,
+      115
+    ]
+  ],
+  "roc_auc": 0.9983471074380166
+}

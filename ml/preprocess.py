@@ -30,6 +30,24 @@ _PUNCT_RE = re.compile(r"[^\w\s]")
 _WS_RE = re.compile(r"\s+")
 
 
+def clean_for_features(text: str | None) -> str:
+    """Aggressive cleaning used for TF-IDF features.
+
+    Lower-cases, strips accents and punctuation, expands common short forms and
+    keeps only word characters - string n-grams then see consistent text.
+    """
+    if not text:
+        return ""
+    from unicodedata import normalize
+
+    text = _HTML_TAG_RE.sub(" ", text)
+    text = _URL_RE.sub(" ", text)
+    text = normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    text = _PUNCT_RE.sub(" ", text)
+    text = _WS_RE.sub(" ", text).lower()
+    return text.strip()
+
+
 def clean_text(text: str | None) -> str:
     """Return a lower-cased, punctuation-free version of *text*.
 

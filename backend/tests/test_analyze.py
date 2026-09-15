@@ -1,14 +1,76 @@
-"""Tests for analysis behaviour: headline-only honesty cap and live check."""
+"""Tests for the honesty of the REAL / FAKE / UNCERTAIN probability scheme.
+
+We verify that we never manufacture an uncertainty percentage and that the
+probability distribution always reflects the raw binary model output (so
+REAL + FAKE = 100% and UNCERTAIN is an abstain decision, not a probability).
+"""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+from app.services.probabilities import (  # noqa: E402
+    LABEL_FAKE,
+    LABEL_REAL,
+    LABEL_UNCERTAIN,
+    UNCERTAIN_THRESHOLD,
+    three_way_prediction,
+)
 
-from app.config import Config
-from app.ml.model_manager import model_manager
-from app.services.analyzer import analyze
+from types import SimpleNamespace  # noqa: E402
 
-FAKE_PROBA = (0.05, 0.95)  # p_real, p_fake -> FAKE with confidence ~0.855
+from app.config import Config  # noqa: E402
+from app.ml.model_manager import model_manager  # noqa: E402
+from app.services.analyzer import analyze  # noqa: E402
+
+
+def test_high_confidence_predicts_fake_raw_probabilities():
+    result = three_way_prediction(0.2, 0.8)
+    assert result["prediction"] == LABEL_FAKE
+    assert result["decided"] is True
+    assert result["confidence"] == 0.8
+    # Raw binary probabilities are preserved and sum to 1 (100%).
+    assert abs(result["probabilities"]["real"] + result["probabilities"]["fake"] - 1.0) < 1e-6
+    assert result["probabilities"]["uncertain"] == 0.0
+    assert result["probabilities"]["real"] == 0.2
+    assert result["probabilities"]["fake"] == 0.8
+
+
+def test_high_confidence_predicts_real_raw_probabilities():
+    result = three_way_prediction(0.92, 0.08)
+    assert result["prediction"] == LABEL_REAL
+    assert result["decided"] is True
+    assert result["confidence"] == 0.92
+    assert abs(result["probabilities"]["real"] + result["probabilities"]["fake"] - 1.0) < 1e-6
+    assert result["probabilities"]["uncertain"] == 0.0
+    assert result["probabilities"]["real"] == 0.92
+
+
+def test_low_confidence_abstains_as_uncertain_without_manufacturing():
+    # A genuine toss-up: the model is only ~60% sure. We abstain but we must
+    # NOT create a fake third probability; real + fake still sum to 100%.
+    result = three_way_prediction(0.6, 0.4)
+    assert result["prediction"] == LABEL_UNCERTAIN
+    assert result["decided"] is False
+    assert result["confidence"] == 0.6
+    assert result["confidence"] < UNCERTAIN_THRESHOLD
+    assert abs(result["probabilities"]["real"] + result["probabilities"]["fake"] - 1.0) < 1e-6
+    assert result["probabilities"]["uncertain"] == 0.0
+    # No invented residual: real + fake + uncertain still equals exactly 1.0.
+    total = (
+        result["probabilities"]["real"]
+        + result["probabilities"]["fake"]
+        + result["probabilities"]["uncertain"]
+    )
+    assert abs(total - 1.0) < 1e-6
+
+
+def test_unshifted_inputs_sum_to_one():
+    # p_real + p_fake are normalized; even skewed inputs must yield 100%.
+    result = three_way_prediction(10.0, 1.0)  # out of [0,1] -> clamped+normalized
+    assert abs(result["probabilities"]["real"] + result["probabilities"]["fake"] - 1.0) < 1e-6
+    assert result["probabilities"]["uncertain"] == 0.0
+
+
+FAKE_PROBA = (0.2, 0.8)  # p_real, p_fake -> FAKE with confidence ~0.80 (High band)
 
 _METADATA = {
     "best_model": "Random Forest",

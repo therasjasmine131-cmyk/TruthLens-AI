@@ -21,9 +21,27 @@ NEGATIVE = "negative"
 LOW = "low"
 
 
-def _coef_contributions(text: str, top_n: int) -> list[dict]:
+def _model_parts():
+    """Return (clf, vectorizer, feature_names) regardless of artifacts layout."""
     bundle = model_manager.bundle
-    clf = bundle.model.named_steps["clf"]
+    model = bundle.model
+    if hasattr(model, "named_steps") and "clf" in model.named_steps:
+        clf = model.named_steps["clf"]
+        vectorizer = bundle.vectorizer
+    else:
+        clf = model
+        vectorizer = bundle.vectorizer
+    names = bundle.feature_names
+    # CalibratedClassifierCV wraps the real linear estimator -> unwrap it.
+    if hasattr(clf, "calibrated_classifiers_") and clf.calibrated_classifiers_:
+        inner = clf.calibrated_classifiers_[0].estimator
+        if hasattr(inner, "coef_"):
+            clf = inner
+    return clf, vectorizer, names
+
+
+def _coef_contributions(text: str, top_n: int) -> list[dict]:
+    clf, vectorizer, names = _model_parts()
     coef = clf.coef_
     if hasattr(coef, "toarray"):
         coef = coef.toarray()
@@ -32,8 +50,7 @@ def _coef_contributions(text: str, top_n: int) -> list[dict]:
         coef = coef[0]
 
     # coefficient sign convention: positive -> REAL, negative -> FAKE
-    names = bundle.feature_names
-    vec = bundle.vectorizer.transform([text])
+    vec = vectorizer.transform([text])
     doc_weights = vec.toarray()[0]
 
     contribs = []
@@ -55,12 +72,11 @@ def _coef_contributions(text: str, top_n: int) -> list[dict]:
 
 
 def _importance_proxy(text: str, top_n: int) -> list[dict]:
-    bundle = model_manager.bundle
-    names = bundle.feature_names
-    importances = np.asarray(bundle.feature_importances or [], dtype=float)
+    _clf, vectorizer, names = _model_parts()
+    importances = np.asarray(model_manager.bundle.feature_importances or [], dtype=float)
     if importances.size == 0:
         return []
-    vec = bundle.vectorizer.transform([text])
+    vec = vectorizer.transform([text])
     doc_weights = vec.toarray()[0]
     contribs = []
     for idx in np.argsort(importances * doc_weights)[::-1]:
@@ -85,14 +101,17 @@ def explain_prediction(text: str, prediction: str, top_n: int = 8) -> dict:
 
     bundle = model_manager.bundle
     explainability = bundle.metadata.get("explainability", "feature_importance")
-    clf_name = bundle.model.named_steps["clf"].__class__.__name__
+    clf, _vectorizer, _names = _model_parts()
+    clf_name = clf.__class__.__name__
 
     if explainability == "coefficients":
         raw = _coef_contributions(text, top_n)
         method = "model-coefficients"
         note = (
-            "Coefficients from the linear decision boundary, scaled by each "
-            "term's TF-IDF weight in this article."
+            "Model-associated features: coefficients from the model's decision "
+            "boundary, scaled by each term's TF-IDF weight in this text. They "
+            "show which words the classifier associated with its REAL/FAKE "
+            "call - not evidence that the news itself is true or false."
         )
         for item in raw:
             if item["contribution"] >= 0.005:
@@ -106,9 +125,11 @@ def explain_prediction(text: str, prediction: str, top_n: int = 8) -> dict:
         raw = _importance_proxy(text, top_n)
         method = "tfidf-x-feature-importance"
         note = (
-            "Tree ensembles have no per-prediction coefficients, so features are "
-            "ranked by their TF-IDF weight in this article multiplied by the "
-            "model's global feature importance (proxy)."
+            "Model-associated features: tree ensembles have no per-prediction "
+            "coefficients, so features are ranked by their TF-IDF weight in "
+            "this text multiplied by the model's global feature importance "
+            "(proxy). This describes what the model leaned on for its decision, "
+            "not whether the news is true."
         )
         features = []
         for rank, item in enumerate(raw):
@@ -121,8 +142,9 @@ def explain_prediction(text: str, prediction: str, top_n: int = 8) -> dict:
         "features": features,
         "note": note,
         "direction_label": (
-            "Positive influence pushes toward REAL; negative pushes toward FAKE."
-            if method == "model-coefficients"
-            else "Higher-ranked terms carry more weight in the decision."
+            "These are model-associated features: words that the model's "
+            "training linked to its REAL/FAKE decision. They reflect statistical "
+            "patterns from the training data - not proof the news is true or "
+            "false."
         ),
     }

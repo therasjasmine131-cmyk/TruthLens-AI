@@ -7,6 +7,7 @@ import {
   ScanSearch,
   FileText,
   Sparkles,
+  AlertTriangle,
 } from "lucide-react";
 import { PageHeader } from "../components/ui/PageHeader";
 import { Card } from "../components/ui/Card";
@@ -18,6 +19,7 @@ import { useToast } from "../context/ToastContext";
 import { api } from "../api/client";
 import { ResultPanel } from "../components/analyze/ResultPanel";
 import { ProgressSteps } from "../components/analyze/ProgressSteps";
+import { computeTextStats } from "../lib/utils";
 import type { AnalysisResult, DemoArticle } from "../types";
 
 const ANALYSIS_STEPS = [
@@ -40,22 +42,24 @@ export function Analyze() {
   const [step, setStep] = useState(0);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [emptyNotice, setEmptyNotice] = useState<string | null>(null);
 
-  const stats = useMemo(() => {
-    const words = (article.trim().split(/\s+/).filter(Boolean)).length;
-    const sentences = article.split(/[.!?]+/).filter((s) => s.trim().length > 0).length;
-    return { chars: article.length, words, sentences };
-  }, [article]);
+  const stats = useMemo(() => computeTextStats(headline, article), [headline, article]);
 
   const analyze = async (headlineOnly: boolean) => {
+    // Never send empty text to the model.
+    if (!headline.trim() && !article.trim()) {
+      setResult(null);
+      setPhase("idle");
+      setEmptyNotice("Please enter a headline or article to analyze.");
+      toast("error", "Nothing to analyze", "Add an article or headline first.");
+      return;
+    }
     if (headlineOnly && !headline.trim()) {
       toast("error", "Headline required", "Enter a headline to analyze.");
       return;
     }
-    if (!headlineOnly && !article.trim() && !headline.trim()) {
-      toast("error", "Nothing to analyze", "Add an article or headline first.");
-      return;
-    }
+    setEmptyNotice(null);
     setLoading(true);
     setPhase("running");
     setStep(0);
@@ -82,6 +86,7 @@ export function Analyze() {
     setArticle(demo.article);
     setResult(null);
     setPhase("idle");
+    setEmptyNotice(null);
     toast("info", "Demo loaded", demo.disclaimer);
   };
 
@@ -144,9 +149,11 @@ export function Analyze() {
                 Paste
               </Button>
               <Button variant="outline" size="sm" icon={<Eraser size={14} />} onClick={() => {
+                setHeadline("");
                 setArticle("");
                 setResult(null);
                 setPhase("idle");
+                setEmptyNotice(null);
               }}>
                 Clear
               </Button>
@@ -186,14 +193,24 @@ export function Analyze() {
         <div className="min-w-0">
           {phase === "idle" && (
             <Card className="min-h-[480px]">
-              <div className="flex h-full flex-col items-center justify-center p-8 text-center">
-                <EmptyState
-                  compact
-                  icon={<Sparkles size={22} />}
-                  title="Your analysis will appear here"
-                  description="Enter an article and run the AI analysis to see the prediction, confidence, keywords and explanation."
-                />
-              </div>
+              {emptyNotice ? (
+                <div className="flex h-full flex-col items-center justify-center p-8 text-center">
+                  <AlertTriangle size={22} className="mb-4 text-amber-500" />
+                  <p className="text-sm font-medium text-slate-700 dark:text-slate-200">{emptyNotice}</p>
+                  <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+                    No model was run and nothing was saved.
+                  </p>
+                </div>
+              ) : (
+                <div className="flex h-full flex-col items-center justify-center p-8 text-center">
+                  <EmptyState
+                    compact
+                    icon={<Sparkles size={22} />}
+                    title="Your analysis will appear here"
+                    description="Enter a headline or article and run the AI analysis to see the prediction, confidence, keywords and explanation."
+                  />
+                </div>
+              )}
             </Card>
           )}
 

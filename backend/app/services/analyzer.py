@@ -14,6 +14,7 @@ from .explainer import explain_prediction
 from .probabilities import confidence_level, three_way_prediction
 from .settings_service import get as get_setting
 from .text_stats import compute_text_stats
+from .verification_service import run_verification
 
 HEADLINE_ONLY_CAVEAT = (
     "Headline-only analysis: with only a headline to work from, the model has "
@@ -72,11 +73,20 @@ def analyze(headline: str | None, article: str | None, *, save: bool = True) -> 
     if headline_only and level in _HIGH_LEVELS:
         level = _HEADLINE_ONLY_CAP
 
+    verification = run_verification(headline, article)
+    overall_verdict = None
+    no_evidence_overall = None
+    if verification:
+        overall_verdict = verification["overall"]["verdict"]
+        no_evidence_overall = verification["overall"].get("confidence_label", "") == "No live evidence retrieved"
+
     payload = {
         "prediction": prediction,
         "confidence": result["confidence"],
         "confidence_level": level,
         "confidence_bands": levels,
+        "decided": result["decided"],
+        "uncertain_threshold": result["uncertain_threshold"],
         "headline_only": headline_only,
         "caveat": HEADLINE_ONLY_CAVEAT if headline_only else None,
         "probabilities": result["probabilities"],
@@ -87,12 +97,15 @@ def analyze(headline: str | None, article: str | None, *, save: bool = True) -> 
         "article_stats": article_stats,
         "explanation": explanation,
         "disclaimer": (
-            "TruthLens AI provides machine-learning-based estimates from patterns "
-            "learned from its training data. A prediction is not proof that an "
-            "article is true or false. Always verify important claims using "
+            "This is an ML-based prediction, not proof of factual truth. "
+            "TruthLens AI reflects statistical patterns learned from a training "
+            "dataset and can be wrong. Always verify important claims using "
             "reliable sources."
         ),
         "saved": False,
+        "verification": verification,
+        "verdict": overall_verdict,
+        "verdict_inference_only": no_evidence_overall,
     }
 
     if save:
@@ -164,9 +177,9 @@ def build_report_data(record: Prediction) -> dict:
         "model_info": meta.get("model_info") or {"name": record.model_name},
         "created_at": record.created_at.isoformat() if record.created_at else None,
         "disclaimer": (
-            "TruthLens AI provides machine-learning-based estimates from patterns "
-            "learned from its training data. A prediction is not proof that an "
-            "article is true or false. Always verify important claims using "
+            "This is an ML-based prediction, not proof of factual truth. "
+            "TruthLens AI reflects statistical patterns learned from a training "
+            "dataset and can be wrong. Always verify important claims using "
             "reliable sources."
         ),
     }

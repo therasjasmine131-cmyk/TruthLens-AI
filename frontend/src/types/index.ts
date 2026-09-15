@@ -1,4 +1,5 @@
 export type PredictionLabel = "REAL" | "FAKE" | "UNCERTAIN";
+export type Verdict = "REAL" | "FALSE" | "UNVERIFIED";
 
 export interface Probabilities {
   real: number;
@@ -65,11 +66,74 @@ export interface LiveCheck {
   reasoning: string;
 }
 
+export interface VerificationEvidence {
+  claim: string;
+  claim_verdict: Verdict;
+  evidence_title: string;
+  source: string | null;
+  domain: string | null;
+  url: string | null;
+  date: string | null;
+  relation: "SUPPORTS" | "CONTRADICTS" | "NEUTRAL";
+  relevance: number;
+  source_quality: number;
+  source_tier: "primary" | "secondary" | "tertiary" | "unknown";
+  source_reasons: string[];
+  retrieved_from: string;
+}
+
+export interface VerificationClaim {
+  text: string;
+  type: string;
+  opinion?: boolean;
+  prediction?: boolean;
+  negation?: boolean;
+  verdict: Verdict;
+  confidence: number;
+  confidence_label: string;
+  reason: string;
+  evidence: Record<string, unknown>[];
+  cross_source: {
+    distinct_support_domains: number;
+    distinct_contradict_domains: number;
+    independent_support: boolean;
+    independent_contradiction: boolean;
+  };
+  ml?: { prediction: string; confidence: number } | null;
+}
+
+export interface VerificationOverall {
+  verdict: Verdict;
+  confidence: number;
+  confidence_label: string;
+  mixed: boolean;
+  counts: { real: number; false: number; unverified: number; total_claims: number };
+  explanation: string;
+}
+
+export interface Verification {
+  status: string;
+  language: { code: string; label: string };
+  claims: VerificationClaim[];
+  overall: VerificationOverall;
+  evidence_matrix: VerificationEvidence[];
+  pipeline: {
+    language_detected: string;
+    claims_extracted: number;
+    evidence_items: number;
+    sources_used: string[];
+    live_evidence_used: boolean;
+  };
+  ml_article?: { prediction: string; confidence: number; probabilities: { real: number; fake: number } } | null;
+}
+
 export interface AnalysisResult {
   prediction: PredictionLabel;
   confidence: number;
   confidence_level: string;
   confidence_bands?: Record<string, number>;
+  decided?: boolean;
+  uncertain_threshold?: number;
   probabilities: Probabilities;
   model_raw?: { p_real: number; p_fake: number };
   model: string;
@@ -83,6 +147,8 @@ export interface AnalysisResult {
   headline_only?: boolean;
   caveat?: string | null;
   live_check?: LiveCheck | null;
+  verdict?: Verdict | null;
+  verification?: Verification | null;
 }
 
 export interface HistoryItem {

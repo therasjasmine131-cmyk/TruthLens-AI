@@ -1,18 +1,20 @@
-"""Conversion of the binary model output into the REAL / FAKE / UNCERTAIN scheme.
+"""Conversion of the binary model output into REAL / FAKE / UNCERTAIN labels.
 
-A binary classifier yields ``p_real`` and ``p_fake`` (summing to 1). The model's
-decision margin is ``margin = |p_real - p_fake|`` and the mass ``1 - margin``
-represents how much the model is *undecided*. That mass is assigned to the
-UNCERTAIN class:
+The trained classifier is **binary**: it outputs ``p_real`` and ``p_fake`` which
+always sum to 1. UNCERTAIN is **not** a third class with its own probability --
+there is no third class in the model. Instead, UNCERTAIN is an *abstain*
+decision we make when the model's top-class probability is too low to trust
+(i.e. the model is "undecided").
 
-    real'      = p_real * margin
-    fake'      = p_fake * margin
-    uncertain' = 1 - margin
-
-These always sum to 1 and are all derived from the actual model probabilities.
-UNCERTAIN becomes the winning class when the model's top probability is below
-~0.78 (i.e. the margin is small), which is a principled "abstain when unsure"
-behaviour.
+Honesty rules enforced here:
+* ``probabilities.real`` and ``probabilities.fake`` are the raw model
+  probabilities (they sum to 1, i.e. 100%).
+* ``probabilities.uncertain`` is always ``0.0`` -- we never manufacture a
+  phoney uncertainty percentage by subtracting anything from the raw
+  probabilities.
+* ``confidence`` is the raw top-class probability (``max(p_real, p_fake)``).
+* When ``confidence`` drops below :data:`UNCERTAIN_THRESHOLD` we abstain and
+  label the result UNCERTAIN.
 """
 
 from __future__ import annotations
@@ -20,6 +22,10 @@ from __future__ import annotations
 LABEL_REAL = "REAL"
 LABEL_FAKE = "FAKE"
 LABEL_UNCERTAIN = "UNCERTAIN"
+
+#: Abstain threshold: if the model's top-class probability is below this, we
+#: do not trust either class and return UNCERTAIN (an abstain, not a class).
+UNCERTAIN_THRESHOLD = 0.78
 
 
 def confidence_level(confidence: float, levels: dict | None = None) -> str:
@@ -39,7 +45,16 @@ def confidence_level(confidence: float, levels: dict | None = None) -> str:
 
 
 def three_way_prediction(p_real: float, p_fake: float) -> dict:
-    """Compute prediction, confidence and the three-way probability split."""
+    """Compute an honest prediction/confidence and the raw probability split.
+
+    Returns a dict with:
+      * ``prediction``   - REAL, FAKE or UNCERTAIN (abstain)
+      * ``confidence``   - the raw top-class probability
+      * ``decided``      - True if a REAL/FAKE call was made, False if abstained
+      * ``uncertain_threshold`` - the abstain threshold used
+      * ``probabilities`` - real + fake = 1 (100%), uncertain = 0.0
+      * ``model_raw``    - the raw binary probabilities
+    """
     p_real = max(0.0, min(1.0, float(p_real)))
     p_fake = max(0.0, min(1.0, float(p_fake)))
     total = p_real + p_fake
@@ -48,28 +63,28 @@ def three_way_prediction(p_real: float, p_fake: float) -> dict:
     else:
         p_real, p_fake = p_real / total, p_fake / total
 
-    margin = abs(p_real - p_fake)
-    uncertain = round(1 - margin, 6)
-    real = round(p_real * margin, 6)
-    fake = round(p_fake * margin, 6)
+    confidence = max(p_real, p_fake)
 
-    if uncertain >= real and uncertain >= fake:
+    if confidence < UNCERTAIN_THRESHOLD:
         prediction = LABEL_UNCERTAIN
-        confidence = uncertain
-    elif real >= fake:
+        decided = False
+    elif p_real >= p_fake:
         prediction = LABEL_REAL
-        confidence = real
+        decided = True
     else:
         prediction = LABEL_FAKE
-        confidence = fake
+        decided = True
 
     return {
         "prediction": prediction,
         "confidence": confidence,
+        "decided": decided,
+        "uncertain_threshold": UNCERTAIN_THRESHOLD,
         "probabilities": {
-            "real": real,
-            "fake": fake,
-            "uncertain": uncertain,
+            "real": round(p_real, 6),
+            "fake": round(p_fake, 6),
+            "uncertain": 0.0,
         },
         "model_raw": {"p_real": round(p_real, 6), "p_fake": round(p_fake, 6)},
     }
+

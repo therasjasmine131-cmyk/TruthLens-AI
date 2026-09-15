@@ -57,7 +57,7 @@ export function ExplanationBars({
                   item.influence === "low" && "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
                 )}
               >
-                {isPositive ? "REAL ↑" : isNegative ? "FAKE ↓" : "low"}
+                {isPositive ? "REAL-leaning" : isNegative ? "FAKE-leaning" : "low"}
               </span>
             </div>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">

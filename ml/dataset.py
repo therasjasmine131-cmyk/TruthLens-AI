@@ -17,6 +17,7 @@ Example::
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -73,6 +74,55 @@ def stratified_split(df: pd.DataFrame, test_size: float = 0.2, seed: int = 42):
     return train_test_split(
         df, test_size=test_size, random_state=seed, stratify=df["label"]
     )
+
+
+_CANON_RE = None
+
+
+def _canonical_key(text: str) -> str:
+    """Lower-cased alphanumeric fingerprint used to group near-identical rows."""
+    global _CANON_RE
+    if _CANON_RE is None:
+        _CANON_RE = re.compile(r"[^a-z0-9]+")
+    return _CANON_RE.sub(" ", text.lower()).strip()
+
+
+def group_split(
+    df: pd.DataFrame,
+    val_size: float = 0.25,
+    test_size: float = 0.2,
+    seed: int = 42,
+):
+    """Leakage-safe train/validation/test split.
+
+    Rows that share a canonicalised headline+text fingerprint are grouped and
+    the *groups* are split (never a single group across folds). This stops
+    republished/duplicated articles from leaking between training and testing.
+    Preserves class proportions using the majority label of each group.
+    """
+    from sklearn.model_selection import train_test_split
+
+    df = df.copy()
+    df["_gkey"] = (df["headline"] + " " + df["text"]).map(_canonical_key)
+    group_label = (
+        df.groupby("_gkey")["label"].agg(lambda s: s.mode().iloc[0]).rename("label")
+    )
+    gdf = group_label.reset_index()
+
+    def _split(groups, size):
+        return train_test_split(
+            groups, test_size=size, random_state=seed, stratify=groups["label"]
+        )
+
+    g_train_all, g_test = _split(gdf, test_size)
+    g_train, g_val = _split(g_train_all, val_size / (1 - test_size))
+
+    parts = {}
+    for name, g in (("train", g_train), ("val", g_val), ("test", g_test)):
+        part = df[df["_gkey"].isin(g["_gkey"].values)]
+        parts[name] = part.drop(columns=["_gkey"]).reset_index(drop=True)
+
+    return parts["train"], parts["val"], parts["test"]
 
 
 def build_samples(sample_size: int = 600, seed: int = 42) -> None:

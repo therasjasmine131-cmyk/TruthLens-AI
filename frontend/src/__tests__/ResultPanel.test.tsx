@@ -8,8 +8,10 @@ const SAMPLE_RESULT: AnalysisResult = {
   prediction: "REAL",
   confidence: 0.924,
   confidence_level: "Very High Confidence",
-  probabilities: { real: 0.924, fake: 0.051, uncertain: 0.025 },
-  model_raw: { p_real: 0.948, p_fake: 0.052 },
+  decided: true,
+  uncertain_threshold: 0.78,
+  probabilities: { real: 0.924, fake: 0.076, uncertain: 0.0 },
+  model_raw: { p_real: 0.924, p_fake: 0.076 },
   model: "Random Forest",
   model_info: { name: "Random Forest", n_features: 5000, metrics: { accuracy: 0.997 } },
   keywords: [
@@ -31,10 +33,10 @@ const SAMPLE_RESULT: AnalysisResult = {
     method: "coefficients",
     model_class: "LogisticRegression",
     features: [{ term: "reuters", weight: 1.2, contribution: 0.14, influence: "positive" }],
-    note: "Note",
-    direction_label: "Positive influence pushes toward REAL.",
+    note: "Model-associated features note.",
+    direction_label: "These are model-associated features.",
   },
-  disclaimer: "Educational disclaimer",
+  disclaimer: "This is an ML-based prediction, not proof of factual truth.",
   saved: true,
   history_id: 1,
 };
@@ -56,6 +58,14 @@ describe("ResultPanel", () => {
     expect(screen.getByText("Probability Distribution")).toBeInTheDocument();
   });
 
+  it("does not show a manufactured UNCERTAIN percentage for a decided prediction", () => {
+    renderPanel();
+    // prediction is REAL, so the UNCERTAIN abstain card must NOT be shown.
+    expect(screen.queryByText(/UNCERTAIN \(abstain\)/i)).not.toBeInTheDocument();
+    // The distribution is honest: it never claims UNCERTAIN is a percentage.
+    expect(screen.queryByText(/residual margin/i)).not.toBeInTheDocument();
+  });
+
   it("renders article statistics and TF-IDF keywords", () => {
     renderPanel();
     expect(screen.getByText("Word Count")).toBeInTheDocument();
@@ -63,9 +73,23 @@ describe("ResultPanel", () => {
     expect(screen.getAllByText("election").length).toBeGreaterThan(0);
   });
 
-  it("shows the model name and metrics", () => {
+  it("shows the model name and honest test-set metrics", () => {
     renderPanel();
     expect(screen.getByText("Random Forest")).toBeInTheDocument();
     expect(screen.getByText("99.7%")).toBeInTheDocument();
+    expect(screen.getByText("Model Performance on Test Dataset")).toBeInTheDocument();
+  });
+
+  it("shows an abstain note and no fake uncertainty for an UNCERTAIN result", () => {
+    render(
+      <MemoryRouter>
+        <ResultPanel
+          result={{ ...SAMPLE_RESULT, prediction: "UNCERTAIN", decided: false, confidence: 0.6 }}
+          compact
+        />
+      </MemoryRouter>
+    );
+    expect(screen.getAllByText(/UNCERTAIN \(abstain\)/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/abstain decision/i)).toBeInTheDocument();
   });
 });

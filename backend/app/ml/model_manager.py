@@ -83,9 +83,17 @@ class ModelManager:
         """Return (p_real, p_fake) or raise when model is unavailable."""
         if not self.ready:
             raise RuntimeError("ML model is not available. Train the model first.")
-        vec = self.bundle.vectorizer.transform([text])
-        clf = self.bundle.model.named_steps["clf"]
-        proba = clf.predict_proba(vec)[0]
+        model = self.bundle.model
+        vectorizer = self.bundle.vectorizer
+        if hasattr(model, "named_steps") and "clf" in model.named_steps:
+            # Full pipeline: vectorizer is embedded, classifier is the last step.
+            clf = model.named_steps["clf"]
+            vec = model[:-1]
+        else:
+            # Bare classifier trained on a separately-saved vectorizer.
+            clf = model
+            vec = vectorizer
+        proba = clf.predict_proba(vec.transform([text]))[0]
         labels = self.bundle.metadata.get("class_labels", ["FAKE", "REAL"])
         p_real = float(proba[labels.index("REAL")])
         p_fake = float(proba[labels.index("FAKE")])

@@ -42,8 +42,9 @@ export function AppLayout() {
         </main>
 
         <footer className="mx-auto w-full max-w-7xl px-4 pb-6 text-center text-[11px] text-slate-400 dark:text-slate-500 sm:px-6 lg:px-8">
-          TruthLens AI provides machine-learning-based estimates. A prediction is not proof that an
-          article is true or false.
+          This is an ML-based prediction, not proof of factual truth. TruthLens AI reflects
+          statistical patterns learned from a training dataset and can be wrong. Verify important
+          claims using reliable sources.
         </footer>
       </div>
     </div>

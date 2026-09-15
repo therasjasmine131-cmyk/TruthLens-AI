@@ -35,6 +35,9 @@ ml/data/raw/
 *.db
 instance/
 
+# ---- Evaluation cache ----
+.cache/
+
 # ---- OS / editor ----
 .DS_Store
 Thumbs.db

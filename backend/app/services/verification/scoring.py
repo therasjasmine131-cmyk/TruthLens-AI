@@ -1,0 +1,270 @@
+"""Final verdict engine: REAL / FALSE / UNVERIFIED with calibrated confidence.
+
+The ML classifier is only one input. The *primary* signal is evidence:
+strong credible support -> REAL, strong credible contradiction -> FALSE,
+otherwise UNVERIFIED. ML is a small agree/disagree modifier only and can never
+override strong contradictory evidence.
+"""
+
+from __future__ import annotations
+
+import statistics
+
+from .relevance import RELATIONS
+
+VERDICT_REAL = "REAL"
+VERDICT_FALSE = "FALSE"
+VERDICT_UNVERIFIED = "UNVERIFIED"
+
+#: Total *significance* mass (support or contradiction) needed for a confident
+#: verdict. Roughly one strong, highly-relevant, credible source.
+STRONG_THRESHOLD = 0.85
+WEAK_THRESHOLD = 0.30
+
+
+def _balanced_sigmoid(x: float) -> float:
+    return x / (1.0 + abs(x))
+
+
+def confidence_from_strength(support: float, contradict: float,
+                             verdict: str, ml_conf: float | None,
+                             contradictory_mass: float | None = None) -> float:
+    """Map evidence strength + ML agreement onto a calibrated 0..1 confidence."""
+    if verdict == VERDICT_REAL:
+        conf = 0.52 + 0.46 * min(1.0, support / STRONG_THRESHOLD)
+    elif verdict == VERDICT_FALSE:
+        conf = 0.52 + 0.46 * min(1.0, abs(contradict) / STRONG_THRESHOLD)
+    else:  # UNVERIFIED
+        conflict = 0.5 if contradictory_mass is not None else 0.0
+        conf = 0.35 + 0.18 * conflict + 0.08 * _balanced_sigmoid(support - contradict)
+    # ML is a tie-breaker only.
+    if ml_conf is not None:
+        agrees = (verdict == VERDICT_REAL and ml_conf >= 0.9) or \
+            (verdict == VERDICT_FALSE and ml_conf >= 0.9)
+        conf += 0.03 if agrees else 0.0
+    return max(0.05, min(0.98, conf))
+
+
+def verdict_for_claim(claim: dict, ml: dict, classified_evidence: list[dict]) -> dict:
+    """Compute the verdict and confidence for a single atomic claim.
+
+    ``classified_evidence`` is a list of dicts already containing the evidence
+    item plus its relation/relevance/source-score/temporal fields.
+    """
+    text = claim.get("text", "")
+    support = sum(e["significance"] for e in classified_evidence if e["relation"] == "SUPPORTS")
+    contradict = sum(e["significance"] for e in classified_evidence if e["relation"] == "CONTRADICTS")
+
+    ml_conf = (ml or {}).get("confidence")
+
+    # --- Special forms ------------------------------------------------------
+    if claim.get("opinion"):
+        return {
+            "verdict": VERDICT_UNVERIFIED,
+            "confidence": 0.5,
+            "confidence_label": "Subjective statement",
+            "reason": ("This statement is subjective (an opinion or value judgement) and "
+                       "is not the kind of claim that can be verified as fact."),
+            "signal": {"support": 0.0, "contradict": 0.0,
+                       "supporting_counts": 0, "contradicting_counts": 0},
+        }
+
+    if claim.get("prediction") and not classified_evidence:
+        return {
+            "verdict": VERDICT_UNVERIFIED,
+            "confidence": 0.5,
+            "confidence_label": "Prediction",
+            "reason": ("This is a prediction about the future. Predictions cannot be "
+                       "verified as fact until the event occurs or is officially decided."),
+            "signal": {"support": 0.0, "contradict": 0.0,
+                       "supporting_counts": 0, "contradicting_counts": 0},
+        }
+
+    n_support = sum(1 for e in classified_evidence if e["relation"] == "SUPPORTS")
+    n_contradict = sum(1 for e in classified_evidence if e["relation"] == "CONTRADICTS")
+
+    # --- No meaningful evidence ---------------------------------------------
+    if not classified_evidence:
+        return {
+            "verdict": VERDICT_UNVERIFIED,
+            "confidence": round(confidence_from_strength(0.0, 0.0, VERDICT_UNVERIFIED, ml_conf), 2),
+            "confidence_label": "No live evidence retrieved",
+            "reason": ("No supporting or contradicting evidence could be retrieved from "
+                       "the available sources. Absence of evidence is not proof the claim "
+                       "is false - it simply cannot be verified right now."),
+            "signal": {"support": 0.0, "contradict": 0.0,
+                       "supporting_counts": 0, "contradicting_counts": 0},
+        }
+
+    only_neutral = not n_support and not n_contradict
+    if only_neutral:
+        return {
+            "verdict": VERDICT_UNVERIFIED,
+            "confidence": round(confidence_from_strength(0.0, 0.0, VERDICT_UNVERIFIED, ml_conf), 2),
+            "confidence_label": "Evidence not specific",
+            "reason": ("Retrieved sources discuss related topics but none directly supports "
+                       "or contradicts this specific claim."),
+            "signal": {"support": support, "contradict": contradict,
+                       "supporting_counts": 0, "contradicting_counts": 0},
+        }
+
+    # --- Evidence-driven decision -------------------------------------------
+    quality_support = sum(max(e["source_score"], 0.0) for e in classified_evidence if e["relation"] == "SUPPORTS")
+    quality_contra = sum(max(e["source_score"], 0.0) for e in classified_evidence if e["relation"] == "CONTRADICTS")
+
+    verdict = VERDICT_UNVERIFIED
+    reason = ""
+
+    if contradict >= STRONG_THRESHOLD and abs(contradict) > support * 1.15:
+        verdict = VERDICT_FALSE
+        reason = _false_reason(claim, classified_evidence)
+    elif (support >= STRONG_THRESHOLD and contradict == 0.0) or (
+            support >= STRONG_THRESHOLD and support > abs(contradict) * 1.5 and n_contradict == 0):
+        verdict = VERDICT_REAL
+        reason = _real_reason(claim, classified_evidence)
+    elif support > 0 and contradict > 0:
+        if support > abs(contradict) * 2.0:
+            verdict = VERDICT_REAL
+            reason = _real_reason(claim, classified_evidence)
+        elif abs(contradict) > support * 2.0:
+            verdict = VERDICT_FALSE
+            reason = _false_reason(claim, classified_evidence)
+        else:
+            reason = ("Evidence is conflicting: some sources support the claim while "
+                      "others contradict it. Too uncertain for a firm verdict.")
+    elif support >= WEAK_THRESHOLD:
+        verdict = VERDICT_REAL
+        reason = _real_reason(claim, classified_evidence)
+    elif abs(contradict) >= WEAK_THRESHOLD:
+        verdict = VERDICT_FALSE
+        reason = _false_reason(claim, classified_evidence)
+    else:
+        reason = ("Available evidence is too weak or vague to confirm or refute "
+                  "this claim.")
+
+    conf = confidence_from_strength(support, contradict, verdict, ml_conf,
+                                    contradictory_mass=min(support, abs(contradict))
+                                    if verdict == VERDICT_UNVERIFIED else None)
+
+    label = _confidence_label(conf)
+    if verdict == VERDICT_UNVERIFIED and not (n_support and n_contradict):
+        label = "Evidence insufficient"
+
+    return {
+        "verdict": verdict,
+        "confidence": round(conf, 2),
+        "confidence_label": label,
+        "reason": reason,
+        "signal": {
+            "support": round(support, 3),
+            "contradict": round(contradict, 3),
+            "supporting_counts": n_support,
+            "contradicting_counts": n_contradict,
+            "support_source_quality": round(quality_support, 2),
+            "contradict_source_quality": round(quality_contra, 2),
+        },
+    }
+
+
+def _real_reason(claim: dict, classified_evidence: list[dict]) -> str:
+    evs = [e for e in classified_evidence if e["relation"] == "SUPPORTS"]
+    evs.sort(key=lambda e: e["significance"], reverse=True)
+    names = {e.get("source_name") or e.get("domain") for e in evs[:2] if e.get("source_name") or e.get("domain")}
+    names = " and ".join(sorted(names)[:2]) or "credible sources"
+    return (f"Credible sources support the claim. Notably {names} publish material "
+            f"consistent with \"{claim['text'][:140]}\".")
+
+
+def _false_reason(claim: dict, classified_evidence: list[dict]) -> str:
+    evs = [e for e in classified_evidence if e["relation"] == "CONTRADICTS"]
+    evs.sort(key=lambda e: e["significance"], reverse=True)
+    names = {e.get("source_name") or e.get("domain") for e in evs[:2] if e.get("source_name") or e.get("domain")}
+    names = " and ".join(sorted(names)[:2]) or "credible sources"
+    return (f"Credible sources directly contradict the claim. {names} report facts "
+            f"inconsistent with \"{claim['text'][:140]}\".")
+
+
+def _confidence_label(conf: float) -> str:
+    if conf >= 0.85:
+        return "High confidence"
+    if conf >= 0.65:
+        return "Moderate confidence"
+    if conf >= 0.45:
+        return "Low confidence"
+    return "Very low confidence"
+
+
+def combine_overall(claim_results: list[dict]) -> dict:
+    """Combine per-claim verdicts into an overall REAL/FALSE/UNVERIFIED verdict."""
+    if not claim_results:
+        return {"verdict": VERDICT_UNVERIFIED, "confidence": 0.4,
+                "explanation": "No claim content could be isolated for verification.",
+                "mixed": False}
+
+    real = [c for c in claim_results if c["verdict"] == VERDICT_REAL]
+    false = [c for c in claim_results if c["verdict"] == VERDICT_FALSE]
+    unverified = [c for c in claim_results if c["verdict"] == VERDICT_UNVERIFIED]
+
+    verifiable = real + false
+    mixed = bool(real and false)
+    vote = 0
+
+    if real and not false:
+        verdict = VERDICT_REAL
+        vote = len(real)
+        conf = statistics.mean(c["confidence"] for c in real)
+    elif false and not real:
+        verdict = VERDICT_FALSE
+        vote = len(false)
+        conf = statistics.mean(c["confidence"] for c in false)
+    elif mixed:
+        real_mass = sum(c["confidence"] for c in real)
+        false_mass = sum(c["confidence"] for c in false)
+        if len(real) > len(false) or (len(real) == len(false) and real_mass > false_mass):
+            verdict = VERDICT_REAL
+            vote = len(real)
+        elif len(false) > len(real) or (len(false) == len(real) and false_mass > real_mass):
+            verdict = VERDICT_FALSE
+            vote = len(false)
+        else:
+            verdict = VERDICT_UNVERIFIED
+        conf = statistics.mean(
+            [c["confidence"] for c in verifiable] or [0.5]
+        ) if verifiable else 0.5
+    else:
+        # Nothing verifiable at all.
+        conf = statistics.mean([c["confidence"] for c in unverified]) if unverified else 0.5
+        verdict = VERDICT_UNVERIFIED
+
+    explanation_parts = []
+    if mixed:
+        explanation_parts.append(
+            f"The content mixes verified and refuted claims "
+            f"({len(real)} supported, {len(false)} contradicted, "
+            f"{len(unverified)} unverifiable)."
+        )
+    if verdict == VERDICT_REAL:
+        explanation_parts.append(
+            f"The supported claims outweigh the others "
+            f"({vote} verified claim(s) against {len(verifiable) - vote} refuted)."
+        )
+    elif verdict == VERDICT_FALSE:
+        explanation_parts.append(
+            f"Credible sources contradict the key claims "
+            f"({vote} refuted claim(s))."
+        )
+    else:
+        explanation_parts.append(
+            "There is not enough credible evidence to confirm or refute the "
+            "claims; some may be opinions or predictions."
+        )
+
+    return {
+        "verdict": verdict,
+        "confidence": round(min(0.98, conf), 2),
+        "confidence_label": _confidence_label(min(0.98, conf)),
+        "mixed": mixed,
+        "counts": {"real": len(real), "false": len(false),
+                   "unverified": len(unverified), "total_claims": len(claim_results)},
+        "explanation": " ".join(explanation_parts),
+    }

@@ -47,6 +47,14 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _repo_path(name: str, default: Path) -> Path:
+    """Resolve a configurable path against the repo root so the app works from
+    any working directory (e.g. Railway runs from ``backend/``)."""
+    raw = os.environ.get(name)
+    p = Path(raw) if raw else default
+    return p if p.is_absolute() else (REPO_ROOT / p)
+
+
 class Config:
     SECRET_KEY = os.environ.get("SECRET_KEY", "truthlens-dev-secret-change-me")
     DEBUG = _env_bool("FLASK_DEBUG", False)
@@ -62,8 +70,8 @@ class Config:
         if o.strip()
     ]
 
-    ML_ARTIFACTS_DIR = Path(os.environ.get("ML_ARTIFACTS_DIR", str(REPO_ROOT / "ml" / "artifacts")))
-    DATASET_RAW_DIR = Path(os.environ.get("DATASET_RAW_DIR", str(REPO_ROOT / "ml" / "data" / "raw")))
+    ML_ARTIFACTS_DIR = _repo_path("ML_ARTIFACTS_DIR", REPO_ROOT / "ml" / "artifacts")
+    DATASET_RAW_DIR = _repo_path("DATASET_RAW_DIR", REPO_ROOT / "ml" / "data" / "raw")
 
     MAX_ARTICLE_LENGTH = int(os.environ.get("MAX_ARTICLE_LENGTH", "12000"))
     MAX_HEADLINE_LENGTH = int(os.environ.get("MAX_HEADLINE_LENGTH", "500"))
@@ -73,6 +81,7 @@ class Config:
     GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
     NEWSAPI_KEY = os.environ.get("NEWSAPI_KEY", "")
     NEWSAPI_BASE_URL = os.environ.get("NEWSAPI_BASE_URL", "https://newsapi.org/v2")
+    FACT_CHECK_API_KEY = os.environ.get("FACT_CHECK_API_KEY", "")
 
     # Confidence-level bands (fractions, applied to the model confidence).
     CONFIDENCE_LEVELS = {

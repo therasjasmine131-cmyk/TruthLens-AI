@@ -59,7 +59,7 @@ const LIMITS: string[] = [
   "The model learned from 2016-2017 US political news (ISOT dataset). Language and events drift, so accuracy on current or foreign news is lower.",
   "Dataset bias: real examples come mostly from Reuters; fake examples from partisan sources. The model may over-rely on style signals (e.g. 'reuters', exclamation marks) rather than truth.",
   "AI confidence is not proof. The model outputs probabilities based on patterns; it cannot verify facts or check sources.",
-  "The three-way output (REAL/FAKE/UNCERTAIN) is derived from the binary model's decision margin. Near-50/50 predictions are reported as UNCERTAIN.",
+  "The three-way output (REAL/FAKE/UNCERTAIN): REAL and FAKE are the binary model's raw probabilities (they sum to 100%). UNCERTAIN is an abstain decision reported when the model's top-class probability is too low to trust, not a third manufactured probability.",
   "Short texts (single sentences) carry too little signal and are less reliable.",
   "Adversarial or carefully-crafted fake articles designed to mimic real reporting can fool the classifier.",
 ];
@@ -115,8 +115,8 @@ export function Methodology() {
         </ul>
         <div className="border-t border-slate-200 px-5 py-4 dark:border-slate-800">
           <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-            TruthLens AI provides machine-learning-based estimates from patterns learned from its
-            training data. A prediction is not proof that an article is true or false. Always verify
+            This is an ML-based prediction, not proof of factual truth. TruthLens AI reflects
+            statistical patterns learned from a training dataset and can be wrong. Always verify
             important claims using reliable sources.
           </p>
         </div>

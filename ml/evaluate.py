@@ -9,14 +9,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import joblib
 import pandas as pd
 from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
 
-from ml.dataset import LABEL_REAL, load_dataset, stratified_split
-from ml.preprocess import clean_for_stats
+from ml.dataset import LABEL_REAL, load_dataset, group_split
+from ml.preprocess import clean_for_features
 
 ARTIFACTS_DIR = Path(__file__).resolve().parent / "artifacts"
 
@@ -26,8 +29,8 @@ def evaluate(full_report: bool = False, test_size: float = 0.2) -> dict:
     metadata = json.loads((ARTIFACTS_DIR / "model_metadata.json").read_text())
 
     df = load_dataset()
-    _, df_test = stratified_split(df, test_size=test_size, seed=metadata["random_seed"])
-    X_test = (df_test["headline"] + " " + df_test["text"]).map(clean_for_stats)
+    _, _, df_test = group_split(df, val_size=0.25, test_size=test_size, seed=metadata["random_seed"])
+    X_test = (df_test["headline"] + " " + df_test["text"]).map(clean_for_features)
     y_test = df_test["label"].values
 
     y_pred = model.predict(X_test)

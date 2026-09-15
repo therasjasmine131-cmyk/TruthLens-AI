@@ -76,7 +76,7 @@ function DetailResult({ detail }: { detail: HistoryDetail }) {
       direction_label: "",
     },
     disclaimer:
-      "TruthLens AI provides machine-learning-based estimates from patterns learned from its training data. A prediction is not proof that an article is true or false.",
+      "This is an ML-based prediction, not proof of factual truth. TruthLens AI reflects statistical patterns learned from a training dataset and can be wrong. Always verify important claims using reliable sources.",
     saved: true,
     history_id: detail.id,
   };

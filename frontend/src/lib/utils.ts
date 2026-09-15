@@ -43,6 +43,43 @@ export function confidenceColor(value: number): string {
   return "text-slate-500 dark:text-slate-400";
 }
 
+export interface LiveStats {
+  chars: number;
+  words: number;
+  sentences: number;
+  unique_words: number;
+  vocabulary_richness: number;
+  average_sentence_length: number;
+  capitalized_words: number;
+  exclamation_marks: number;
+  question_marks: number;
+}
+
+/**
+ * Compute text statistics from the exact combined submitted text
+ * (headline + article) -- the same source string sent to the model, and the
+ * same algorithm the backend uses. Keeping a single source of truth prevents
+ * the on-screen counter and the result statistics from disagreeing.
+ */
+export function computeTextStats(headline: string, article: string): LiveStats {
+  const full = `${headline} ${article}`.trim();
+  const words = full ? full.split(/\s+/).filter(Boolean) : [];
+  const sentences = full.split(/[.!?]+/).filter((s) => s.trim().length > 0);
+  const unique = new Set(words.map((w) => w.toLowerCase()));
+  const caps = full.match(/\b[A-Z][A-Za-z]*\b/g) ?? [];
+  return {
+    chars: full.length,
+    words: words.length,
+    sentences: sentences.length,
+    unique_words: unique.size,
+    vocabulary_richness: words.length ? unique.size / words.length : 0,
+    average_sentence_length: sentences.length ? words.length / sentences.length : 0,
+    capitalized_words: caps.length,
+    exclamation_marks: (full.match(/!/g) ?? []).length,
+    question_marks: (full.match(/\?/g) ?? []).length,
+  };
+}
+
 export function downloadBlob(content: string, filename: string, mime = "text/csv;charset=utf-8;"): void {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
