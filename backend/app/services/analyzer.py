@@ -61,16 +61,31 @@ def analyze(headline: str | None, article: str | None, *, save: bool = True,
 
     levels = get_setting("confidence_levels", Config.CONFIDENCE_LEVELS)
     article_stats = compute_text_stats(headline, article)
-    keywords = model_manager.top_tfidf_terms(combined, top_n=10)
 
-    p_real, p_fake = model_manager.predict_proba(combined)
-    result = three_way_prediction(p_real, p_fake)
-    explanation = explain_prediction(combined, result["prediction"], top_n=8)
+    ml_ready = model_manager.ready
+    if ml_ready:
+        p_real, p_fake = model_manager.predict_proba(combined)
+        result = three_way_prediction(p_real, p_fake)
+        keywords = model_manager.top_tfidf_terms(combined, top_n=10)
+    else:
+        result = {
+            "prediction": None,
+            "confidence": 0.0,
+            "decided": False,
+            "uncertain_threshold": None,
+            "probabilities": {"real": None, "fake": None, "uncertain": None},
+            "model_raw": None,
+        }
+        keywords = []
 
-    model_info = _model_info()
+    explanation = explain_prediction(
+        combined, result["prediction"] or "UNVERIFIED", top_n=8
+    ) if ml_ready and result["prediction"] else {}
+
+    model_info = _model_info() if ml_ready else {"name": "Unavailable", "metrics": {}}
     prediction = result["prediction"]
 
-    level = confidence_level(result["confidence"], levels)
+    level = confidence_level(result["confidence"], levels) if ml_ready else "Low Confidence"
     if headline_only and level in _HIGH_LEVELS:
         level = _HEADLINE_ONLY_CAP
 
@@ -109,7 +124,7 @@ def analyze(headline: str | None, article: str | None, *, save: bool = True,
         "verdict_inference_only": no_evidence_overall,
     }
 
-    if save:
+    if save and prediction is not None:
         try:
             record = Prediction(
                 headline=headline,

@@ -103,8 +103,36 @@ export function ResultPanel({
         </div>
       )}
 
+      {/* ---- AI verdict (headline) ---- */}
+      {result.ai_verdict && (
+        <Card className="overflow-hidden">
+          <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+            <Brain size={16} className="text-primary-500" />
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">AI Verdict</h3>
+              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                {result.ai_verdict.source === "gemini"
+                  ? "Google Gemini cross-check against its knowledge of real-world reporting"
+                  : "Based on retrieved evidence and independent AI analysis"}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-start">
+            <div className="flex flex-col items-start gap-2 sm:min-w-[200px]">
+              <LiveCheckBadge label={result.ai_verdict.verdict} confidence={result.ai_verdict.confidence} />
+              <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                {result.ai_verdict.source === "gemini" ? "Source: Google Gemini" : "Source: Evidence + AI"}
+              </p>
+            </div>
+            <p className="flex-1 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+              {result.ai_verdict.reasoning || "No reasoning returned."}
+            </p>
+          </div>
+        </Card>
+      )}
+
       {/* ---- Live knowledge check (Gemini) ---- */}
-      {result.live_check && result.live_check.label && (
+      {!result.ai_verdict && result.live_check && result.live_check.label && (
         <Card>
           <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-4 dark:border-slate-800">
             <Globe2 size={16} className="text-primary-500" />
@@ -129,14 +157,15 @@ export function ResultPanel({
       {/* ---- Evidence-based verification ---- */}
       {result.verification && <VerificationSection verification={result.verification} />}
 
-      {/* ---- Legacy ML verdict + gauge ---- */}
+      {/* ---- Secondary ML signal ---- */}
+      {result.prediction && (
       <Card className="overflow-hidden">
         <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
           <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-            ML Classifier Output
+            Secondary Signal — Trained ML Classifier
           </h3>
           <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-            Secondary stylistic signal from the trained classifier. Verdicts above are evidence-driven.
+            Stylistic pattern from the local model only. The AI verdict above is the primary judgment.
           </p>
         </div>
         <div className="grid gap-6 p-6 md:grid-cols-2">
@@ -185,6 +214,7 @@ export function ResultPanel({
           <Disclaimer text={result.disclaimer} />
         </div>
       </Card>
+      )}
 
       {/* ---- Actions ---- */}
       {!compact && (

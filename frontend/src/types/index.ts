@@ -66,6 +66,13 @@ export interface LiveCheck {
   reasoning: string;
 }
 
+export interface AiVerdict {
+  verdict: "REAL" | "FAKE" | "UNVERIFIED";
+  confidence: number;
+  reasoning?: string;
+  source?: string;
+}
+
 export interface VerificationEvidence {
   claim: string;
   claim_verdict: Verdict;
@@ -211,6 +218,7 @@ export interface AnalysisResult {
   headline_only?: boolean;
   caveat?: string | null;
   live_check?: LiveCheck | null;
+  ai_verdict?: AiVerdict | null;
   verdict?: Verdict | null;
   verification?: Verification | null;
 }
