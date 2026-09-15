@@ -92,6 +92,9 @@ def evaluate(count: int, seed: int, engine: str) -> dict:
     df_real = df[df["label"] == LABEL_REAL]
     df_fake = df[df["label"] == LABEL_FAKE]
     rows = build_rows(df_real, df_fake, count, seed)
+    if len(rows) < count:
+        print(f"[data] WARNING: requested {count} but only {len(df)} genuinely-unseen rows "
+              f"exist on this dataset - testing all of them instead.")
     print(f"[data] {len(rows)} rows ({int((rows['label'] == LABEL_REAL).sum())} REAL / "
           f"{int((rows['label'] == LABEL_FAKE).sum())} FAKE) seed={seed} "
           f"(trained-on rows excluded, {len(df)} unseen rows available)")
