@@ -173,7 +173,7 @@ def test_parse_json_regex_fallback():
 
 
 def test_analyze_claim_ai_builds_record(monkeypatch):
-    monkeypatch.setattr(ai_stage, "_call", lambda system, user, temperature=0.1: {
+    monkeypatch.setattr(ai_stage, "_call_gemini", lambda system, user, temperature=0.1: {
         "decision": "support", "confidence": 0.87, "reasoning": "Evidence backs it.",
     })
     result = ai_stage.analyze_claim_ai("some claim", [_ev("SUPPORTS")], "english")
@@ -184,14 +184,23 @@ def test_analyze_claim_ai_builds_record(monkeypatch):
 
 
 def test_analyze_claim_ai_invalid_decision_is_none(monkeypatch):
-    monkeypatch.setattr(ai_stage, "_call", lambda system, user, temperature=0.1: {
+    monkeypatch.setattr(ai_stage, "_call_gemini", lambda system, user, temperature=0.1: {
         "decision": "MAYBE", "confidence": 0.99, "reasoning": "x",
     })
     assert ai_stage.analyze_claim_ai("claim", [], "english") is None
 
 
+def test_analyze_claim_ai_accepts_plural_verdicts(monkeypatch):
+    monkeypatch.setattr(ai_stage, "_call_gemini", lambda system, user, temperature=0.1: {
+        "decision": "SUPPORTS", "confidence": 0.9, "reasoning": "Evidence supports it.",
+    })
+    result = ai_stage.analyze_claim_ai("claim", [_ev("SUPPORTS")], "english")
+    assert result is not None
+    assert result["decision"] == "SUPPORT"
+
+
 def test_review_claim_ai_builds_record(monkeypatch):
-    monkeypatch.setattr(ai_stage, "_call", lambda system, user, temperature=0.1: {
+    monkeypatch.setattr(ai_stage, "_call_bazaarlink", lambda system, user, temperature=0.1: {
         "verdict": "support", "confidence": 0.8, "agrees_with_first": True,
         "problems": ["Evidence is old"], "reasoning": "ok",
     })
@@ -199,6 +208,7 @@ def test_review_claim_ai_builds_record(monkeypatch):
     result = ai_stage.review_claim_ai("claim", [_ev("SUPPORTS")], ai1, "english")
     assert result["available"] is True
     assert result["verdict"] == "SUPPORT"
+    assert result["source"] == "bazaarlink"
     assert result["agrees_with_first"] is True
     assert result["problems"] == ["Evidence is old"]
 

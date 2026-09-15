@@ -1,16 +1,18 @@
 """AI reasoning stages for the multi-stage verification pipeline.
 
-Two independent free-tier Gemini stages (no SDK, plain HTTPS) sit between
-evidence retrieval and the final decision engine:
+Two independent AI providers sit between evidence retrieval and the final
+decision engine. Using different providers ensures genuine cross-checking:
 
-* ``analyze_claim_ai`` - AI analysis #1: given the claim and the retrieved
-  evidence, decide SUPPORT / CONTRADICT / INSUFFICIENT using ONLY the evidence.
-* ``review_claim_ai`` - AI analysis #2: an adversarial reviewer that actively
-  looks for errors in AI #1 (mis-stated claim, off-topic evidence, staleness,
-  hallucination, independence, credibility...).
+* ``analyze_claim_ai`` - AI analysis #1 (Gemini): given the claim and the
+  retrieved evidence, decide SUPPORT / CONTRADICT / INSUFFICIENT using ONLY
+  the evidence.
+* ``review_claim_ai`` - AI analysis #2 (BazaarLink/DeepSeek): an adversarial
+  reviewer that actively looks for errors in AI #1 (mis-stated claim,
+  off-topic evidence, staleness, hallucination, independence, credibility...).
 
-Both degrade to ``None`` whenever Gemini is unavailable, so the rest of the
-pipeline behaves exactly as before (evidence-driven verdicts, ML tie-breaker).
+Both degrade to ``None`` whenever their respective provider is unavailable,
+so the rest of the pipeline behaves exactly as before (evidence-driven
+verdicts, ML tie-breaker).
 """
 
 from __future__ import annotations
@@ -24,7 +26,12 @@ import urllib.error
 import urllib.request
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
-DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
+
+BAZAARLINK_BASE_URL = "https://api.bazaarlink.ai/v1"
+BAZAARLINK_MODEL = os.environ.get("BAZAARLINK_MODEL", "deepseek/deepseek-v4-flash-0731")
+BAZAARLINK_FREE_FALLBACK = os.environ.get("BAZAARLINK_FREE_FALLBACK", "auto:free")
+
 TIMEOUT_SECONDS = 18
 MAX_RETRIES = 1
 MAX_EVIDENCE_IN_CONTEXT = 5
@@ -89,20 +96,40 @@ _USER_REVIEW = (
     "- List real problems only; do not invent issues to disagree."
 )
 
-_DECISION_RE = re.compile(r'"decision"\s*:\s*"(SUPPORT|CONTRADICT|INSUFFICIENT)"', re.I)
-_VERDICT_RE = re.compile(r'"verdict"\s*:\s*"(SUPPORT|CONTRADICT|INSUFFICIENT)"', re.I)
+_DECISION_RE = re.compile(r'"decision"\s*:\s*"(SUPPORT[^",]*|CONTRADICT[^",]*|INSUFFICIENT[^",]*|UNVERIFIED)"', re.I)
+_VERDICT_RE = re.compile(r'"verdict"\s*:\s*"(SUPPORT[^",]*|CONTRADICT[^",]*|INSUFFICIENT[^",]*|UNVERIFIED)"', re.I)
 _CONF_RE = re.compile(r'"confidence"\s*:\s*(0?\.\d+|\d\.\d+|1|0)\b')
 _AGREES_RE = re.compile(r'"agrees_with_first"\s*:\s*(true|false)', re.I)
 _REASON_RE = re.compile(r'"reasoning"\s*:\s*"((?:[^"\\]|\\.)*)"', re.DOTALL)
 _PROBLEM_RE = re.compile(r'"\s*((?:[^"\\]|\\.){3,}?)\s*"\s*[,}\]]', re.DOTALL)
 
+_CANONICAL = {
+    "SUPPORT": "SUPPORT", "SUPPORTS": "SUPPORT",
+    "CONTRADICT": "CONTRADICT", "CONTRADICTS": "CONTRADICT",
+    "INSUFFICIENT": "INSUFFICIENT", "UNVERIFIED": "INSUFFICIENT",
+}
+
+
+def _normalize_verdict(value: object) -> str | None:
+    """Map an LLM verdict string to SUPPORT / CONTRADICT / INSUFFICIENT."""
+    canonical = _CANONICAL.get(str(value or "").strip().upper())
+    return canonical if canonical else None
+
 
 def available() -> bool:
-    return bool(os.environ.get("GEMINI_API_KEY", "").strip())
+    return bool(
+        os.environ.get("GEMINI_API_KEY", "").strip()
+        or os.environ.get("BAZAARLINK_API_KEY", "").strip()
+    )
 
 
 def model_name() -> str:
-    return os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
+    parts = []
+    if os.environ.get("GEMINI_API_KEY", "").strip():
+        parts.append(f"gemini:{GEMINI_MODEL}")
+    if os.environ.get("BAZAARLINK_API_KEY", "").strip():
+        parts.append(f"bazaarlink:{BAZAARLINK_MODEL}")
+    return " + ".join(parts) or "none"
 
 
 def _cache_key(*parts: str) -> str:
@@ -125,8 +152,11 @@ def build_evidence_context(evidence: list[dict]) -> str:
     return "\n\n".join(rows) if rows else "(no evidence retrieved)"
 
 
-def _call(system: str, user: str, temperature: float = 0.1):
-    """One Gemini completion. Returns the parsed JSON dict or None."""
+# ---------------------------------------------------------------------------
+# Gemini call (AI #1)
+# ---------------------------------------------------------------------------
+
+def _call_gemini(system: str, user: str, temperature: float = 0.1) -> dict | None:
     key = os.environ.get("GEMINI_API_KEY", "")
     if not key:
         return None
@@ -135,12 +165,12 @@ def _call(system: str, user: str, temperature: float = 0.1):
         "systemInstruction": {"parts": [{"text": system}]},
         "generationConfig": {"responseMimeType": "application/json", "temperature": temperature},
     }
-    url = f"{GEMINI_BASE_URL}/models/{model_name()}:generateContent"
-    headers = [{"x-goog-api-key": key}, {"Authorization": f"Bearer {key}"}]
+    url = f"{GEMINI_BASE_URL}/models/{GEMINI_MODEL}:generateContent"
+    headers_list = [{"x-goog-api-key": key}, {"Authorization": f"Bearer {key}"}]
     body = json.dumps(payload).encode("utf-8")
     for attempt in range(MAX_RETRIES + 1):
         transient = False
-        for auth in headers:
+        for auth in headers_list:
             try:
                 req = urllib.request.Request(
                     url, data=body,
@@ -149,7 +179,7 @@ def _call(system: str, user: str, temperature: float = 0.1):
                 )
                 with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:  # noqa: S310 https only
                     data = json.loads(resp.read().decode("utf-8"))
-                text = _text_from_response(data)
+                text = _text_from_gemini(data)
                 if not text:
                     continue
                 return _parse_json_object(text)
@@ -168,7 +198,7 @@ def _call(system: str, user: str, temperature: float = 0.1):
     return None
 
 
-def _text_from_response(data: dict) -> str | None:
+def _text_from_gemini(data: dict) -> str | None:
     try:
         parts = data["candidates"][0]["content"]["parts"]
         text = "".join(p.get("text", "") for p in parts)
@@ -176,6 +206,75 @@ def _text_from_response(data: dict) -> str | None:
     except (KeyError, IndexError, TypeError):
         return None
 
+
+# ---------------------------------------------------------------------------
+# BazaarLink call (AI #2) — OpenAI-compatible /v1/chat/completions
+# ---------------------------------------------------------------------------
+
+def _call_bazaarlink(system: str, user: str, temperature: float = 0.1) -> dict | None:
+    key = os.environ.get("BAZAARLINK_API_KEY", "")
+    if not key:
+        return None
+    body = json.dumps({
+        "model": BAZAARLINK_MODEL,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "temperature": temperature,
+        "response_format": {"type": "json_object"},
+    }).encode("utf-8")
+    url = f"{BAZAARLINK_BASE_URL}/chat/completions"
+    for attempt in range(MAX_RETRIES + 2):
+        transient = False
+        if attempt > 0:
+            body = json.dumps({
+                "model": BAZAARLINK_FREE_FALLBACK,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                "temperature": temperature,
+                "response_format": {"type": "json_object"},
+            }).encode("utf-8")
+        try:
+            req = urllib.request.Request(
+                url, data=body,
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:  # noqa: S310
+                data = json.loads(resp.read().decode("utf-8"))
+            text = _text_from_bazaarlink(data)
+            if not text:
+                return None
+            return _parse_json_object(text)
+        except urllib.error.HTTPError as exc:
+            if exc.code in (402, 429, 500, 503):
+                transient = True
+            else:
+                return None
+        except Exception:  # noqa: BLE001
+            return None
+        if not transient:
+            return None
+        time.sleep(0.5 * (2 ** attempt))
+    return None
+
+
+def _text_from_bazaarlink(data: dict) -> str | None:
+    try:
+        return data["choices"][0]["message"]["content"].strip() or None
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Parsing helpers
+# ---------------------------------------------------------------------------
 
 def _extract_model_json(text: str) -> dict:
     try:
@@ -219,8 +318,12 @@ def _problems_from(text: str) -> list[str]:
     return [p.strip().replace("\\n", " ")[:160] for p in problems][:5]
 
 
+# ---------------------------------------------------------------------------
+# Public API — AI #1 (Gemini) + AI #2 (BazaarLink)
+# ---------------------------------------------------------------------------
+
 def analyze_claim_ai(claim: str, evidence: list[dict], language: str) -> dict | None:
-    """AI analysis #1 for one atomic claim. Returns a dict or None."""
+    """AI analysis #1 (Gemini) for one atomic claim. Returns a dict or None."""
     ctx = build_evidence_context(evidence)
     key = _cache_key("ai1", claim, ctx)
     if key in _CACHE:
@@ -236,11 +339,11 @@ def _run_analyze(claim: str, ctx: str, language: str) -> dict | None:
         claim=claim[:1200],
         evidence=ctx or "(no evidence retrieved)",
     )
-    obj = _call(_SYSTEM_ANALYZE, user)
+    obj = _call_gemini(_SYSTEM_ANALYZE, user)
     if not obj:
         return None
-    decision = str(obj.get("decision") or obj.get("verdict") or "").upper()
-    if decision not in {"SUPPORT", "CONTRADICT", "INSUFFICIENT"}:
+    decision = _normalize_verdict(obj.get("decision") or obj.get("verdict"))
+    if not decision:
         return None
     try:
         confidence = max(0.0, min(1.0, float(obj.get("confidence", 0.5))))
@@ -249,7 +352,7 @@ def _run_analyze(claim: str, ctx: str, language: str) -> dict | None:
     return {
         "available": True,
         "source": "gemini",
-        "model": model_name(),
+        "model": GEMINI_MODEL,
         "decision": decision,
         "confidence": round(confidence, 3),
         "reasoning": str(obj.get("reasoning", ""))[:400],
@@ -258,7 +361,7 @@ def _run_analyze(claim: str, ctx: str, language: str) -> dict | None:
 
 def review_claim_ai(claim: str, evidence: list[dict], ai1: dict,
                     language: str) -> dict | None:
-    """AI analysis #2: adversarial review of AI #1. Returns a dict or None."""
+    """AI analysis #2 (BazaarLink): adversarial review of AI #1."""
     ctx = build_evidence_context(evidence)
     key = _cache_key("ai2", claim, ctx,
                      json.dumps(ai1, sort_keys=True, default=str))
@@ -281,11 +384,11 @@ def _run_review(claim: str, ctx: str, ai1: dict, language: str) -> dict | None:
         evidence=ctx or "(no evidence retrieved)",
         ai1=ai1_txt[:800],
     )
-    obj = _call(_SYSTEM_REVIEW, user)
+    obj = _call_bazaarlink(_SYSTEM_REVIEW, user)
     if not obj:
         return None
-    verdict = str(obj.get("verdict") or obj.get("decision") or "").upper()
-    if verdict not in {"SUPPORT", "CONTRADICT", "INSUFFICIENT"}:
+    verdict = _normalize_verdict(obj.get("verdict") or obj.get("decision"))
+    if not verdict:
         return None
     try:
         confidence = max(0.0, min(1.0, float(obj.get("confidence", 0.5))))
@@ -299,8 +402,8 @@ def _run_review(claim: str, ctx: str, ai1: dict, language: str) -> dict | None:
         problems = _problems_from(obj.get("reasoning", ""))
     return {
         "available": True,
-        "source": "gemini",
-        "model": model_name(),
+        "source": "bazaarlink",
+        "model": BAZAARLINK_MODEL,
         "verdict": verdict,
         "confidence": round(confidence, 3),
         "agrees_with_first": agrees,
