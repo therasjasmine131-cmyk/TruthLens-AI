@@ -1,0 +1,10 @@
+.git
+.gitignore
+.env
+.cache
+.pytest_cache
+node_modules
+frontend/dist
+ml/data/raw
+*.db
+instance

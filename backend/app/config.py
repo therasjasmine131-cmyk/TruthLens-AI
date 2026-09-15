@@ -60,7 +60,14 @@ class Config:
     DEBUG = _env_bool("FLASK_DEBUG", False)
     TESTING = False
 
-    DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{INSTANCE_DIR / 'truthlens.db'}")
+    # Vercel serverless provides no writable disk: use an in-memory DB there
+    # (history lives per-instance; the analyze endpoint stays fully functional).
+    _is_serverless = os.environ.get("VERCEL") == "1"
+    DATABASE_URL = os.environ.get(
+        "DATABASE_URL",
+        "sqlite:///:memory:" if _is_serverless
+        else f"sqlite:///{INSTANCE_DIR / 'truthlens.db'}",
+    )
     SQLALCHEMY_DATABASE_URI = DATABASE_URL
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 

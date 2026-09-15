@@ -18,7 +18,11 @@ def create_app(config_class=Config) -> Flask:
     app.config.from_object(config_class)
 
     Path(app.config.get("ML_ARTIFACTS_DIR")).mkdir(parents=True, exist_ok=True)
-    Path(app.instance_path).mkdir(parents=True, exist_ok=True)
+    # Read-only filesystems (e.g. Vercel functions) must not abort startup here.
+    try:
+        Path(app.instance_path).mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
 
     db.init_app(app)
     cors.init_app(app, resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}})

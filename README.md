@@ -119,5 +119,8 @@ See `.env.example` and `DEPLOYMENT.md` for full details.
 
 ## Links
 
+- Live app (Vercel serverless): https://truthlens-ai-prod.vercel.app
 - Repository: https://github.com/therasjasmine131-cmyk/TruthLens-AI
-- Deployment: see `DEPLOYMENT.md` (Railway backend + Vercel frontend)
+- Deployment: see `DEPLOYMENT.md`. Hosted as a single Vercel Python service
+  (entrypoint `api/index.py`, Flask serves both the API and the built SPA);
+  the DB is in-memory (ephemeral) on the serverless tier.

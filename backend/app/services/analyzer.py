@@ -109,33 +109,38 @@ def analyze(headline: str | None, article: str | None, *, save: bool = True) -> 
     }
 
     if save:
-        record = Prediction(
-            headline=headline,
-            article_text=article,
-            prediction=prediction,
-            real_probability=result["probabilities"]["real"],
-            fake_probability=result["probabilities"]["fake"],
-            uncertain_probability=result["probabilities"]["uncertain"],
-            confidence=result["confidence"],
-            model_name=model_info["name"],
-            word_count=article_stats["word_count"],
-            character_count=article_stats["character_count"],
-            sentence_count=article_stats["sentence_count"],
-            top_keywords=[k["term"] for k in keywords],
-            analysis_metadata={
-                "article_stats": article_stats,
-                "keywords": keywords,
-                "probabilities": result["probabilities"],
-                "model_raw": result["model_raw"],
-                "explanation": explanation,
-                "model_info": model_info,
-                "confidence_level": payload["confidence_level"],
-            },
-        )
-        db.session.add(record)
-        db.session.commit()
-        payload["saved"] = True
-        payload["history_id"] = record.id
+        try:
+            record = Prediction(
+                headline=headline,
+                article_text=article,
+                prediction=prediction,
+                real_probability=result["probabilities"]["real"],
+                fake_probability=result["probabilities"]["fake"],
+                uncertain_probability=result["probabilities"]["uncertain"],
+                confidence=result["confidence"],
+                model_name=model_info["name"],
+                word_count=article_stats["word_count"],
+                character_count=article_stats["character_count"],
+                sentence_count=article_stats["sentence_count"],
+                top_keywords=[k["term"] for k in keywords],
+                analysis_metadata={
+                    "article_stats": article_stats,
+                    "keywords": keywords,
+                    "probabilities": result["probabilities"],
+                    "model_raw": result["model_raw"],
+                    "explanation": explanation,
+                    "model_info": model_info,
+                    "confidence_level": payload["confidence_level"],
+                },
+            )
+            db.session.add(record)
+            db.session.commit()
+            payload["saved"] = True
+            payload["history_id"] = record.id
+        except Exception as exc:  # ephemeral/read-only storage must not break analyze
+            db.session.rollback()
+            payload["saved"] = False
+            payload["save_error"] = str(exc)
 
     return payload
 

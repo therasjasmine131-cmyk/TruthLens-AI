@@ -1,0 +1,12 @@
+.git
+.gitignore
+.env
+.cache
+.pytest_cache
+node_modules
+frontend
+ml/data/raw
+instance
+*.db
+railway.json
+.railwayignore
