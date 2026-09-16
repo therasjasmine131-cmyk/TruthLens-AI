@@ -76,7 +76,7 @@ function DetailResult({ detail }: { detail: HistoryDetail }) {
       direction_label: "",
     },
     disclaimer:
-      "This is an ML-based prediction, not proof of factual truth. TruthLens AI reflects statistical patterns learned from a training dataset and can be wrong. Always verify important claims using reliable sources.",
+      "This is an AI model prediction, not proof of factual truth. TruthLens AI reflects statistical patterns learned from a training dataset and can be wrong. Always verify important claims using reliable sources.",
     saved: true,
     history_id: detail.id,
   };

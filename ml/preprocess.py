@@ -1,26 +1,27 @@
 """Text preprocessing helpers for the TruthLens AI pipeline.
 
-The pipeline deliberately uses only standard-library `re` and scikit-learn's
-bundled English stop-word list so that training and inference run without any
-external NLTK / spaCy model downloads. NLTK can be swapped in for fancier
-lemmatization without changing the rest of the architecture.
+The neural network tokenizes *words* (not TF-IDF n-grams), so preprocessing
+only needs to produce a clean, lower-cased, punctuation-free string. There is
+no dependency on scikit-learn or any external NLP model; a small built-in
+stop-word list is used by the legacy ``tokenize()`` helper only.
 """
 
 from __future__ import annotations
 
 import re
 
-from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
-
-#: Tokens considered placeholders and dropped during feature extraction.
-STOP_WORDS = set(ENGLISH_STOP_WORDS) | {
-    "reuters",
-    "said",
-    "says",
-    "also",
-    "new",
-    "would",
-    "could",
+#: Built-in stop words used by :func:`tokenize` (word-frequency keywords).
+STOP_WORDS = {
+    "the", "and", "for", "with", "that", "this", "from", "have", "has", "had",
+    "are", "was", "were", "will", "would", "could", "should", "can", "not",
+    "but", "all", "she", "he", "they", "them", "their", "there", "here",
+    "been", "being", "which", "who", "whom", "whose", "than", "then", "when",
+    "where", "what", "why", "how", "into", "onto", "over", "under", "between",
+    "among", "through", "during", "about", "after", "before", "because",
+    "while", "may", "might", "must", "do", "does", "did", "doing", "at", "an",
+    "as", "if", "in", "of", "on", "or", "so", "to", "by", "doe", "else",
+    "each", "few", "more", "most", "some", "such", "same", "too", "very",
+    "just", "also", "new", "one", "two", "reuters", "said", "says",
     "according",
 }
 
@@ -31,10 +32,10 @@ _WS_RE = re.compile(r"\s+")
 
 
 def clean_for_features(text: str | None) -> str:
-    """Aggressive cleaning used for TF-IDF features.
+    """Aggressive cleaning used before tokenization.
 
-    Lower-cases, strips accents and punctuation, expands common short forms and
-    keeps only word characters - string n-grams then see consistent text.
+    Lower-cases, strips accents and punctuation, removes HTML/URLs and keeps
+    only word characters - the same normalisation applied during NN training.
     """
     if not text:
         return ""
@@ -49,11 +50,7 @@ def clean_for_features(text: str | None) -> str:
 
 
 def clean_text(text: str | None) -> str:
-    """Return a lower-cased, punctuation-free version of *text*.
-
-    Newlines are preserved as spaces so that sentence splitting still works on
-    the original text (see :func:`clean_for_stats`).
-    """
+    """Return a lower-cased, punctuation-free version of *text*."""
     if not text:
         return ""
     text = _HTML_TAG_RE.sub(" ", text)

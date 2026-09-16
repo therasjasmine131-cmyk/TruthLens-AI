@@ -12,8 +12,12 @@ const SAMPLE_RESULT: AnalysisResult = {
   uncertain_threshold: 0.78,
   probabilities: { real: 0.924, fake: 0.076, uncertain: 0.0 },
   model_raw: { p_real: 0.924, p_fake: 0.076 },
-  model: "Random Forest",
-  model_info: { name: "Random Forest", n_features: 5000, metrics: { accuracy: 0.997 } },
+  model: "Neural Network (BiGRU)",
+  model_info: {
+    name: "Neural Network (BiGRU)",
+    n_features: 20000,
+    metrics: { accuracy: 0.994 },
+  },
   keywords: [
     { term: "reuters", score: 0.12 },
     { term: "election", score: 0.09 },
@@ -30,13 +34,13 @@ const SAMPLE_RESULT: AnalysisResult = {
     question_marks: 1,
   },
   explanation: {
-    method: "coefficients",
-    model_class: "LogisticRegression",
+    method: "nn-token-influence",
+    model_class: "BiGRU (Embedding->BiGRU->Dense)",
     features: [{ term: "reuters", weight: 1.2, contribution: 0.14, influence: "positive" }],
     note: "Model-associated features note.",
     direction_label: "These are model-associated features.",
   },
-  disclaimer: "This is an ML-based prediction, not proof of factual truth.",
+  disclaimer: "This is an AI model prediction, not proof of factual truth.",
   saved: true,
   history_id: 1,
 };
@@ -66,7 +70,7 @@ describe("ResultPanel", () => {
     expect(screen.queryByText(/residual margin/i)).not.toBeInTheDocument();
   });
 
-  it("renders article statistics and TF-IDF keywords", () => {
+  it("renders article statistics and neural keywords", () => {
     renderPanel();
     expect(screen.getByText("Word Count")).toBeInTheDocument();
     expect(screen.getAllByText("reuters").length).toBeGreaterThan(0);
@@ -75,9 +79,22 @@ describe("ResultPanel", () => {
 
   it("shows the model name and honest test-set metrics", () => {
     renderPanel();
-    expect(screen.getByText("Random Forest")).toBeInTheDocument();
-    expect(screen.getByText("99.7%")).toBeInTheDocument();
+    expect(screen.getByText("Neural Network (BiGRU)")).toBeInTheDocument();
+    expect(screen.getByText("99.4%")).toBeInTheDocument();
     expect(screen.getByText("Model Performance on Test Dataset")).toBeInTheDocument();
+  });
+
+  it("renders a final verdict hero when evidence verdict is present", () => {
+    render(
+      <MemoryRouter>
+        <ResultPanel
+          result={{ ...SAMPLE_RESULT, verdict: "FALSE" }}
+          compact
+        />
+      </MemoryRouter>
+    );
+    expect(screen.getByText("Final Verdict")).toBeInTheDocument();
+    expect(screen.getByText("FALSE")).toBeInTheDocument();
   });
 
   it("shows an abstain note and no fake uncertainty for an UNCERTAIN result", () => {

@@ -1,22 +1,21 @@
 # TruthLens AI — Free Deployment Guide
 
-TruthLens deploys as **two free services**:
+TruthLens deploys as a **single Vercel Python service** (free tier, no credit
+card): the Flask app serves both the API and the built React SPA from one
+serverless function (`api/index.py`), so the frontend calls `/api` on the same
+origin.
 
-| Service | Role                         | Platform | Stack                         |
-| ------- | ---------------------------- | -------- | ----------------------------- |
-| Backend | Flask API + ML model inference | Railway | Python / Gunicorn / Nixpacks  |
-| Frontend| React SPA                     | Vercel   | Vite / React / TypeScript     |
+| Service | Role                         | Platform          | Stack                            |
+| ------- | ---------------------------- | ----------------- | -------------------------------- |
+| App     | Flask API + SPA + NN inference | Vercel (hobby)  | Python / Flask / NumPy (no scikit-learn, no torch at runtime) |
 
-Both platforms have a free/hobby tier (no credit card required). The ML
-artifacts in `ml/artifacts/` are committed to the repo, so the backend boots
-with the trained model — **no retraining on the server**.
+The trained model in `models/fake_news_neural_network/` is committed to the
+repo and only uses **NumPy at runtime** — the backend boots with the trained
+network and needs no retraining, no torch, no sklearn on the server.
 
 ---
 
 ## 0. One-time: push this repo to GitHub
-
-Railway and Vercel both deploy from a GitHub repository, so the first step is
-to make this folder a repo and push it:
 
 ```bash
 git init
@@ -27,77 +26,67 @@ git remote add origin git@github.com:<you>/truthlens-ai.git
 git push -u origin main
 ```
 
-> **Security:** `.gitignore` excludes `.env`, `ml/data/raw/`, SQLite DBs and
-> generated build artifacts. **Never commit a real `.env`.**
+> **Security:** `.env` is never committed. Copy `.env.example` to `.env`
+> locally to test with real API keys.
 
 ---
 
-## 1. Backend → Railway
-
-The config is in `railway.json` (root directory `backend`, Nixpacks build,
-Gunicorn start command, `/api/health` healthcheck).
-
-1. In the Railway dashboard: **New Project → Deploy from GitHub repo** → pick
-   this repo. Railway reads `railway.json` automatically.
-2. Open the service → **Variables** and set:
-   ```env
-   SECRET_KEY=<long-random-string>          # e.g. `openssl rand -hex 32`
-   CORS_ORIGINS=https://<your-app>.vercel.app
-   # PORT is injected by Railway; do NOT set it.
-   # Optional: DATABASE_URL=sqlite:///truthlens.db (default) or a Railway Postgres URL.
-   # Optional: GEMINI_API_KEY / NEWSAPI_KEY for the extra analyzers.
-   ```
-3. Deploy → visit the **Settings → Networking → Generate Domain** to get your
-   public URL, then **copy it** — you'll need it for the frontend.
-
-Expected result: `GET https://<backend>.up.railway.app/api/health` returns
-`ok` and the app responds on `/api`.
-
----
-
-## 2. Frontend → Vercel
-
-The config is in `frontend/vercel.json` (SPA rewrite). Vercel auto-detects the
-Vite build (`npm run build`, output `frontend/dist`).
-
-1. [vercel.com](https://vercel.com) → **Add New → Project** → import the same
-   GitHub repo.
-2. Set **Root Directory** to `frontend`.
-3. Add the environment variable (pointing at your Railway service):
-   ```env
-   VITE_API_URL=https://<backend>.up.railway.app
-   ```
-   > If `VITE_API_URL` is left empty the SPA calls `/api` on the same origin —
-   > only workable if the backend serves the built frontend from
-   > `backend/static/`.
-4. Deploy. Your public site is `https://<your-app>.vercel.app`.
-
----
-
-## 3. Point the frontend at the backend
-
-`frontend/src/api/client.ts` already reads `VITE_API_URL` (with a dev fallback),
-so no code change is required once the variable is set. Update the `CORS_ORIGINS`
-on Railway to match the final Vercel URL if it differs from what you set in step 1.
-
----
-
-## 4. Verify the deployment
-
-- **Backend:** `curl https://<backend>.up.railway.app/api/health`
-- **Frontend:** open `https://<your-app>.vercel.app` and run an analysis.
-- Watch the deploy logs in the Railway/Vercel dashboards for the first boot
-  (the model loads at startup; it can take ~30–60s).
-
----
-
-## Local verification (before pushing)
+## 1. Local verification (before pushing)
 
 ```bash
 # Backend tests (from repo root)
-python -m pip install -r requirements.txt
-python -m pytest backend/tests
+python -m pip install -r backend/requirements.txt
+python -m pytest backend/tests -q
 
 # Frontend production build
 cd frontend && npm install && npm run build && cd ..
+
+# Serve the built SPA from the backend (commit-required layout)
+Copy-Item -Recurse frontend\dist\* backend\static\
 ```
+
+---
+
+## 2. Deploy to Vercel (single service)
+
+1. Install the Vercel CLI: `npm i -g vercel` and log in (`vercel login`).
+2. From the repo root, create the production deployment:
+   ```bash
+   vercel --prod --yes
+   ```
+   Vercel reads `vercel.json` (service web → `api/index.py`). The Python
+   function auto-detects `requirements.txt` at the repo root (which pins
+   Flask/NumPy only — no scikit-learn, no torch, keeping the free tier happy).
+3. Set production environment variables in the Vercel dashboard
+   (Project → Settings → Environment Variables):
+   ```env
+   SECRET_KEY=<long-random-string>
+   # Optional live backends (offline mode works without them):
+   GEMINI_API_KEY=<...>
+   NEWSAPI_KEY=<...>
+   FACT_CHECK_API_KEY=<...>
+   ```
+4. Your public site is `https://<your-app>.vercel.app` (this project uses
+   `https://truthlens-ai-prod.vercel.app`).
+
+Expected result: `GET https://<your-app>.vercel.app/api/health` returns `ok`
+with `neural_network.ready: true`, and `/api/verify` responds.
+
+---
+
+## 3. Verify the deployment
+
+- **Health:** `curl https://<your-app>.vercel.app/api/health`
+- **Verify a claim:** `POST /api/verify` with `{ "headline": "...", "article": "...", "language": "auto" }`
+- Open the site and run an analysis. Watch the Vercel function logs for the
+  first boot (NumPy model load is fast and memory-light).
+
+---
+
+## 4. Updating the model
+
+1. Train/extend the network: `python ml/train.py` (needs
+   `requirements-train.txt` incl. PyTorch; only run locally).
+2. This rewrites `models/fake_news_neural_network/`.
+3. Rebuild the SPA, `Copy-Item` `frontend\dist\*` into `backend\static\`,
+   commit, then `vercel --prod --yes`.

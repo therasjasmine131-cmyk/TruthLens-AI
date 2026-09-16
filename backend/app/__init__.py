@@ -17,7 +17,7 @@ def create_app(config_class=Config) -> Flask:
     app = Flask(__name__, instance_relative_config=True)
     app.config.from_object(config_class)
 
-    Path(app.config.get("ML_ARTIFACTS_DIR")).mkdir(parents=True, exist_ok=True)
+    Path(app.config.get("NN_MODEL_DIR")).mkdir(parents=True, exist_ok=True)
     # Read-only filesystems (e.g. Vercel functions) must not abort startup here.
     try:
         Path(app.instance_path).mkdir(parents=True, exist_ok=True)
@@ -28,7 +28,7 @@ def create_app(config_class=Config) -> Flask:
     cors.init_app(app, resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}})
 
     from . import models  # noqa: F401  (register tables)
-    from .routes import ai_detector, analytics, analyze, batch, dataset, health, history, model_perf, news, samples, settings
+    from .routes import ai_detector, analytics, analyze, batch, dataset, health, history, model_perf, news, samples, settings, verify
 
     for bp in (
         health.bp,
@@ -42,6 +42,7 @@ def create_app(config_class=Config) -> Flask:
         settings.bp,
         ai_detector.bp,
         news.bp,
+        verify.bp,
     ):
         app.register_blueprint(bp)
 
@@ -56,6 +57,7 @@ def create_app(config_class=Config) -> Flask:
                 "endpoints": [
                     "POST /api/analyze",
                     "POST /api/analyze/headline",
+                    "POST /api/verify",
                     "POST /api/batch/analyze",
                     "POST /api/detect-ai-text",
                     "GET  /api/news/trending",

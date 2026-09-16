@@ -213,8 +213,9 @@ export function Settings() {
             </div>
             <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
               TruthLens AI is an educational machine-learning platform that estimates news credibility
-              using TF-IDF features and supervised classifiers. Predictions are estimates, not proof.
-              Built with Flask, scikit-learn, React and Tailwind CSS.
+              with a neural network (Embedding → BiGRU) and evidence-based verification. Predictions
+              are estimates, not proof.
+              Built with Flask, NumPy, React and Tailwind CSS.
             </p>
           </div>
         </Card>

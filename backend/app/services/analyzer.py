@@ -66,7 +66,7 @@ def analyze(headline: str | None, article: str | None, *, save: bool = True,
     if ml_ready:
         p_real, p_fake = model_manager.predict_proba(combined)
         result = three_way_prediction(p_real, p_fake)
-        keywords = model_manager.top_tfidf_terms(combined, top_n=10)
+        keywords = model_manager.top_keywords(combined, top_n=10)
     else:
         result = {
             "prediction": None,
@@ -113,7 +113,7 @@ def analyze(headline: str | None, article: str | None, *, save: bool = True,
         "article_stats": article_stats,
         "explanation": explanation,
         "disclaimer": (
-            "This is an ML-based prediction, not proof of factual truth. "
+            "This is an AI model prediction, not proof of factual truth. "
             "TruthLens AI reflects statistical patterns learned from a training "
             "dataset and can be wrong. Always verify important claims using "
             "reliable sources."
@@ -199,7 +199,7 @@ def build_report_data(record: Prediction) -> dict:
         "model_info": meta.get("model_info") or {"name": record.model_name},
         "created_at": record.created_at.isoformat() if record.created_at else None,
         "disclaimer": (
-            "This is an ML-based prediction, not proof of factual truth. "
+            "This is an AI model prediction, not proof of factual truth. "
             "TruthLens AI reflects statistical patterns learned from a training "
             "dataset and can be wrong. Always verify important claims using "
             "reliable sources."

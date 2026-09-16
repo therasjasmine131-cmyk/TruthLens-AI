@@ -77,7 +77,9 @@ class Config:
         if o.strip()
     ]
 
-    ML_ARTIFACTS_DIR = _repo_path("ML_ARTIFACTS_DIR", REPO_ROOT / "ml" / "artifacts")
+    # Neural-network artifacts (weights.npz, vocab.json, config.json, ...) in
+    # models/fake_news_neural_network/. The runtime is pure NumPy/Python.
+    NN_MODEL_DIR = _repo_path("NN_MODEL_DIR", REPO_ROOT / "models" / "fake_news_neural_network")
     DATASET_RAW_DIR = _repo_path("DATASET_RAW_DIR", REPO_ROOT / "ml" / "data" / "raw")
 
     MAX_ARTICLE_LENGTH = int(os.environ.get("MAX_ARTICLE_LENGTH", "12000"))

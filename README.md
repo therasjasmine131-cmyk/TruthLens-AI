@@ -1,10 +1,10 @@
 # TruthLens AI
 
-Hybrid fact-checking tool that combines a trained ML classifier with an
-evidence-based verification engine. For every submitted article it returns a
-classifier prediction (`REAL` / `FAKE`) **and** an explainable evidence verdict
-(`REAL` / `FALSE` / `UNVERIFIED`) backed by retrieved sources, claim
-decomposition, and a curated knowledge base.
+Hybrid fact-checking tool that combines a trained neural network (Embedding →
+BiGRU) with an evidence-based verification engine. For every submitted article
+it returns a classifier prediction (`REAL` / `FAKE`) **and** an explainable
+evidence verdict (`REAL` / `FALSE` / `UNVERIFIED`) backed by retrieved sources,
+claim decomposition, and a curated knowledge base.
 
 Demo data, verification pipeline, and trained model are all local — no external
 calls are required for the evidence engine's knowledge-base mode.
@@ -14,8 +14,8 @@ calls are required for the evidence engine's knowledge-base mode.
 ```
 article text (+ headline)
         │
-        ├── ML CLASSIFIER ────────────────► REAL / FAKE / UNCERTAIN (+probabilities)
-        │     Linear SVM on word 1-2 grams
+        ├── NN CLASSIFIER ─────────────────► REAL / FAKE / UNCERTAIN (+probabilities)
+        │     Embedding → BiGRU (trained with PyTorch, runs on pure NumPy)
         │
         └── VERIFICATION ENGINE ──────────► evidence verdict + full report
               1. decompose article into atomic claims (opinion / prediction
@@ -41,8 +41,10 @@ backend/                Flask API (analyze, batch, history, settings, ...)
   static/               built frontend (copied from frontend/dist)
 frontend/               React + Vite + Tailwind UI
 ml/                     training + evaluation pipeline (train, dataset, ...)
-  artifacts/            trained model + evaluation reports
+  nn_tokenize.py, nn_forward.py   vocabulary + pure-NumPy BiGRU inference
   data/                 1,200-row sample dataset (ISOT-derived)
+models/                 exported runtime model
+  fake_news_neural_network/  weights.npz, vocab.json, config.json, metrics.json
 DEPLOYMENT.md, .env.example   deployment notes & configuration
 ```
 
@@ -51,9 +53,13 @@ DEPLOYMENT.md, .env.example   deployment notes & configuration
 ### 1. Train the model (one-time)
 
 ```powershell
-pip install -r requirements.txt
-python ml/train.py            # trains 5 models, keeps the best Linear SVM
+pip install -r requirements-train.txt   # includes PyTorch (CPU)
+python ml/train.py                      # trains/fine-tunes the BiGRU and exports models/fake_news_neural_network/
 ```
+
+The command-line defaults target the full ISOT dataset (`ml/data/raw/`). Use
+`python ml/train.py --sample --epochs 2` for a quick smoke run on the bundled
+1,200-row sample.
 
 ### 2. Run the backend
 
@@ -83,34 +89,29 @@ Copy-Item -Recurse dist\* ..\backend\static\
 ## Evaluation
 
 ```powershell
-python ml/evaluate.py --full-report          # train/test metrics of the best model
-python ml/evaluate_claims.py                 # evidence engine on curated knowledge-base claims
-python ml/evaluate_holdout.py --count 200 --seed 7
-                                            # holdout audit: 200+ genuinely unseen articles,
-                                            # reports ML accuracy, verdict coverage, and the
-                                            # hybrid (verdict-else-classifier) accuracy
+python ml/train.py                     # prints train/val/test metrics + NumPy-vs-torch parity check
+python ml/evaluate_claims.py           # evidence engine on curated knowledge-base claims
 ```
 
-Latest supervised results (on the bundled 1,200-row sample):
+Latest results (on the full ISOT training run — see `models/fake_news_neural_network/metrics.json` for the deployed model):
 
 | Check | Result |
 |---|---|
-| ML classifier (test split) | accuracy 0.971, F1 0.971, AUC 0.998 |
+| Neural network (test split) | see metrics.json (model_manager /api/model-perf reports live) |
 | Evidence engine (curated claims) | 12/12 = 100% |
-| 200-article holdout audit (unseen) | ML/hybrid accuracy 0.97, 0 dangerous wrong verdicts |
 
 ## Tests
 
 ```powershell
-python -m pytest backend/tests -q     # backend (34 tests)
-cd frontend; npm test                  # frontend (25 tests)
+python -m pytest backend/tests -q     # backend (64 tests)
+cd frontend; npm test                  # frontend (26 tests)
 ```
 
 ## Configuration (`.env`)
 
 | Variable | Purpose |
 |---|---|
-| `ML_ARTIFACTS_DIR` | trained-model location (default `ml/artifacts`) |
+| `NN_MODEL_DIR` | exported model location (default `models/fake_news_neural_network`) |
 | `DATASET_RAW_DIR` | full ISOT CSVs for retraining (`ml/data/raw/`) |
 | `TRUTHLENS_LIVE_EVIDENCE` | set `0` to force knowledge-base-only mode |
 | `FACT_CHECK_API_KEY` / `NEWSAPI_KEY` / `GEMINI_API_KEY` | optional live evidence + AI-text backends; when unset, the app gracefully falls back to offline heuristics |

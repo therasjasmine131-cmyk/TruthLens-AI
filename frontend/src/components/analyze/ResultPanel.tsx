@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ShieldCheck,
@@ -83,12 +84,14 @@ export function ResultPanel({
   compact?: boolean;
 }) {
   const navigate = useNavigate();
-  const [showTfidf, setShowTfidf] = useState(false);
+  const [showKeywordInfo, setShowKeywordInfo] = useState(false);
 
   const stats = result.article_stats;
   const probs = result.probabilities;
   const keywords = result.keywords.slice(0, 10);
   const feats = result.explanation?.features ?? [];
+
+  const finalVerdict = pickFinalVerdict(result);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -100,6 +103,29 @@ export function ResultPanel({
             {result.caveat ??
               "Headline-only analysis — with only a headline, the model has very little text to judge. Verify with the full article and reliable sources."}
           </span>
+        </div>
+      )}
+
+      {/* ---- Final verdict hero ---- */}
+      {finalVerdict && (
+        <div className={`rounded-xl border p-5 ${VERDICT_STYLES[finalVerdict].card}`}>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className={`text-[11px] font-semibold uppercase tracking-wide ${VERDICT_STYLES[finalVerdict].muted}`}>
+                Final Verdict
+              </p>
+              <p className={`mt-1 text-2xl font-bold ${VERDICT_STYLES[finalVerdict].text}`}>
+                {finalVerdict}
+              </p>
+              <p className={`mt-1 max-w-xl text-xs leading-relaxed ${VERDICT_STYLES[finalVerdict].muted}`}>
+                {VERDICT_STYLES[finalVerdict].blurb}
+              </p>
+            </div>
+            <div className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium ${VERDICT_STYLES[finalVerdict].pill}`}>
+              {VERDICT_STYLES[finalVerdict].icon}
+              Evidence-led · never fabricates sources
+            </div>
+          </div>
         </div>
       )}
 
@@ -157,15 +183,15 @@ export function ResultPanel({
       {/* ---- Evidence-based verification ---- */}
       {result.verification && <VerificationSection verification={result.verification} />}
 
-      {/* ---- Secondary ML signal ---- */}
+      {/* ---- Secondary NN signal ---- */}
       {result.prediction && (
       <Card className="overflow-hidden">
         <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
           <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-            Secondary Signal — Trained ML Classifier
+            Secondary Signal — Trained Neural Network
           </h3>
           <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-            Stylistic pattern from the local model only. The AI verdict above is the primary judgment.
+            Stylistic pattern from the local BiGRU network only. The verdict above is the primary judgment.
           </p>
         </div>
         <div className="grid gap-6 p-6 md:grid-cols-2">
@@ -176,7 +202,7 @@ export function ResultPanel({
             </div>
             <ConfidenceGauge confidence={result.confidence} prediction={result.prediction} />
             <p className="text-center text-[11px] text-slate-400 dark:text-slate-500">
-              Model: {result.model} · {result.model_info?.vectorizer?.replace(/^TfidfVectorizer /, "")}
+              Model: {result.model} · {result.model_info?.vectorizer ?? "word embedding + BiGRU"}
             </p>
           </div>
 
@@ -264,28 +290,26 @@ export function ResultPanel({
             <div>
               <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">NLP Insights</h3>
               <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                TF-IDF keywords extracted from this article · {keywords.length} terms · vocabulary size{" "}
+                Neural keywords extracted from this article · {keywords.length} terms · vocabulary size{" "}
                 {result.model_info?.n_features?.toLocaleString() ?? "—"}
               </p>
             </div>
             <button
-              onClick={() => setShowTfidf((v) => !v)}
+              onClick={() => setShowKeywordInfo((v) => !v)}
               className="flex items-center gap-1 text-xs font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400"
             >
-              {showTfidf ? "Hide explanation" : "What is TF-IDF?"}
-              {showTfidf ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              {showKeywordInfo ? "Hide explanation" : "How are keywords chosen?"}
+              {showKeywordInfo ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             </button>
           </div>
         </div>
         <div className="p-5">
-          {showTfidf && (
+          {showKeywordInfo && (
             <div className="mb-5 rounded-lg border border-primary-200 bg-primary-50 px-4 py-3 text-xs leading-relaxed text-primary-900 dark:border-primary-800 dark:bg-primary-950/40 dark:text-primary-200">
-              <strong>What is TF-IDF?</strong> Term Frequency–Inverse Document Frequency scores how
-              important a word is within one article. A word is important if it appears often in this
-              article (high term frequency) but is rare across the whole training corpus (low document
-              frequency). Common words like "the" get low scores; distinctive words like "election"
-              get high scores. The classifier uses these weighted word features to separate real from
-              fake articles.
+              <strong>How are these chosen?</strong> The neural network reads the article once
+              left-to-right and once right-to-left (a bidirectional GRU). Each word moves the
+              network's internal state by some amount; the words that move it the most are
+              ranked as the keywords the network paid attention to for its REAL/FAKE call.
             </div>
           )}
           <HorizontalBars
@@ -334,11 +358,11 @@ export function ResultPanel({
         </div>
         <div className="grid grid-cols-2 gap-x-4 gap-y-3 p-5 pb-2 text-xs sm:grid-cols-3 lg:grid-cols-4">
           <ModelField label="Model Used" value={result.model} />
-          <ModelField label="Vectorizer" value={result.model_info?.vectorizer ?? "—"} />
+          <ModelField label="Tokenizer" value={result.model_info?.vectorizer ?? "—"} />
           <ModelField label="Training Dataset" value={result.model_info?.dataset_source ?? "—"} />
           <ModelField label="Training Samples" value={result.model_info?.train_samples?.toLocaleString() ?? "—"} />
           <ModelField label="Testing Samples" value={result.model_info?.test_samples?.toLocaleString() ?? "—"} />
-          <ModelField label="Number of Features" value={result.model_info?.n_features?.toLocaleString() ?? "—"} />
+          <ModelField label="Vocabulary Size" value={result.model_info?.n_features?.toLocaleString() ?? "—"} />
           <ModelField
             label="Training Date"
             value={result.model_info?.training_date ? new Date(result.model_info.training_date).toLocaleDateString() : "—"}
@@ -352,8 +376,9 @@ export function ResultPanel({
           </h3>
           <p className="mt-0.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
             These scores were measured on a held-out test set that was not used to train the
-            model (a stratified split, with TF-IDF fitted on the training folds only). They
-            describe the model's performance on the training corpus, <strong className="font-medium">not</strong> a
+            model (a leakage-safe grouped split, with the token vocabulary built from the
+            training split only). They describe the model's performance on the training corpus,{" "}
+            <strong className="font-medium">not</strong> a
             guarantee of accuracy on real-world news.
           </p>
         </div>
@@ -392,4 +417,52 @@ function LiveCheckBadge({ label, confidence }: { label: string; confidence: numb
       <span className="font-medium opacity-80">· {Math.round(confidence * 100)}%</span>
     </div>
   );
+}
+
+const VERDICT_STYLES: Record<
+  string,
+  { card: string; text: string; muted: string; pill: string; blurb: string; icon: ReactNode }
+> = {
+  TRUE: {
+    card: "border-emerald-400/60 bg-emerald-50/70 dark:border-emerald-700/50 dark:bg-emerald-950/30",
+    text: "text-emerald-700 dark:text-emerald-400",
+    muted: "text-emerald-700/70 dark:text-emerald-400/70",
+    pill: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+    blurb: "Credible evidence supports this claim.",
+    icon: <CheckCircle2 size={15} />,
+  },
+  FALSE: {
+    card: "border-rose-400/60 bg-rose-50/70 dark:border-rose-700/50 dark:bg-rose-950/30",
+    text: "text-rose-700 dark:text-rose-400",
+    muted: "text-rose-700/70 dark:text-rose-400/70",
+    pill: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300",
+    blurb: "Credible evidence contradicts this claim.",
+    icon: <XCircle size={15} />,
+  },
+  UNVERIFIED: {
+    card: "border-amber-400/60 bg-amber-50/70 dark:border-amber-700/50 dark:bg-amber-950/30",
+    text: "text-amber-700 dark:text-amber-400",
+    muted: "text-amber-700/70 dark:text-amber-400/70",
+    pill: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+    blurb: "No credible evidence could confirm or refute this claim, so it stays unverified.",
+    icon: <HelpCircle size={15} />,
+  },
+};
+
+function pickFinalVerdict(result: AnalysisResult): string | null {
+  const fromOverview = result.verdict;
+  if (fromOverview) {
+    return fromOverview === "FALSE" ? "FALSE" : fromOverview === "UNVERIFIED" ? "UNVERIFIED" : "TRUE";
+  }
+  if (result.ai_verdict?.verdict) {
+    if (result.ai_verdict.verdict === "REAL") return "TRUE";
+    if (result.ai_verdict.verdict === "FAKE") return "FALSE";
+    if (result.ai_verdict.verdict === "UNVERIFIED") return "UNVERIFIED";
+  }
+  if (result.live_check?.label) {
+    if (result.live_check.label === "REAL") return "TRUE";
+    if (result.live_check.label === "FAKE") return "FALSE";
+    if (result.live_check.label === "UNVERIFIED") return "UNVERIFIED";
+  }
+  return null;
 }

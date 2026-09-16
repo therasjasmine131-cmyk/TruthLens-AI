@@ -21,7 +21,7 @@ def batch_analyze():
     """
     if not model_manager.ready:
         raise ServiceUnavailableError(
-            "ML model is not available. Train the model first.", status_code=503
+            "Neural network is not available. Train the model first.", status_code=503
         )
     data = request.get_json(silent=True) or {}
     rows = data.get("rows")

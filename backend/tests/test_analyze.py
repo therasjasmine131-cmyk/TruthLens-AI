@@ -73,13 +73,13 @@ def test_unshifted_inputs_sum_to_one():
 FAKE_PROBA = (0.2, 0.8)  # p_real, p_fake -> FAKE with confidence ~0.80 (High band)
 
 _METADATA = {
-    "best_model": "Random Forest",
-    "model_class": "RandomForestClassifier",
-    "vectorizer": "TfidfVectorizer (5,000 features, unigrams)",
+    "best_model": "Neural Network (BiGRU)",
+    "model_class": "BiGRUNet (Embedding -> BiGRU -> Dense)",
+    "vectorizer": "Word tokenizer (vocab 20000, max_len 400)",
     "dataset_source": "ISOT Fake News (full)",
     "train_samples": 26938,
     "test_samples": 8980,
-    "n_features": 5000,
+    "n_features": 20000,
     "metrics": {"accuracy": 0.99},
 }
 
@@ -89,7 +89,7 @@ def _patch_model(monkeypatch):
         model_manager, "bundle", SimpleNamespace(_loaded=True)
     )
     monkeypatch.setattr(model_manager, "predict_proba", lambda text: FAKE_PROBA)
-    monkeypatch.setattr(model_manager, "top_tfidf_terms", lambda text, top_n=10: [])
+    monkeypatch.setattr(model_manager, "top_keywords", lambda text, top_n=10: [])
     monkeypatch.setattr(model_manager, "metadata", lambda: dict(_METADATA))
     monkeypatch.setattr(
         "app.services.analyzer.explain_prediction",

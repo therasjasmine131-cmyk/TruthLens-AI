@@ -1,0 +1,14 @@
+{
+  "architecture": "Embedding -> BiGRU -> Dense -> ReLU -> Output",
+  "class_labels": [
+    "FAKE",
+    "REAL"
+  ],
+  "vocab_size": 30002,
+  "max_len": 320,
+  "embed_dim": 64,
+  "hidden_dim": 64,
+  "dense_dim": 64,
+  "dropout": 0.2,
+  "device": "cpu"
+}

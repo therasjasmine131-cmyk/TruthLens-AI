@@ -1,8 +1,8 @@
 """End-to-end claim verification orchestrator.
 
-Multi-stage pipeline (each stage logged; ML is the LOWEST authority):
+Multi-stage pipeline (each stage logged; ML/NN is the LOWEST authority):
 
-    user input -> preprocessing -> ML classifier -> claim decomposition ->
+    user input -> preprocessing -> NN classifier -> claim decomposition ->
     atomic claim extraction -> evidence retrieval -> AI analysis #1 ->
     evidence-based reasoning -> AI critic / review #2 -> consistency check ->
     final decision engine -> overall verdict
@@ -151,7 +151,7 @@ def _finalize_claim(claim: dict, evidence_result: dict, ai1: dict | None,
     contradicting = [e for e in classified if e["relation"] == "CONTRADICTS"]
 
     stages = {
-        "ML_RESULT": {
+        "NN_RESULT": {
             "prediction": (ml or {}).get("prediction"),
             "confidence": (ml or {}).get("confidence"),
         },
@@ -307,7 +307,7 @@ def verify_text(text: str | None, headline: str | None = None,
 
     stages = {
         "PIPELINE": [
-            "USER INPUT", "PREPROCESSING", "ML CLASSIFIER",
+            "USER INPUT", "PREPROCESSING", "NN CLASSIFIER",
             "CLAIM EXTRACTION", "EVIDENCE RETRIEVAL", "AI ANALYSIS #1",
             "AI REVIEW #2", "FINAL DECISION",
         ],
@@ -340,8 +340,9 @@ def verify_text(text: str | None, headline: str | None = None,
         "stages": stages if include_debug else None,
         "notes": {
             "model_note": (
-                "The local ML model is used as a secondary stylistic signal only. "
-                "Verdicts are driven by retrieved evidence and source credibility."
+                "The local neural network is used as a secondary stylistic "
+                "signal only. Verdicts are driven by retrieved evidence and "
+                "source credibility."
             ),
             "no_evidence_note": (
                 "No live evidence sources were configured or reachable. Results for "

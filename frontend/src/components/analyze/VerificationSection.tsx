@@ -100,7 +100,7 @@ function AiChip({ label, decision, confidence }: { label: string; decision: AiSt
   );
 }
 
-const STAGE_KEYS = ["ML_RESULT", "EVIDENCE_RESULT", "AI_RESULT_1", "AI_REVIEW_RESULT", "FINAL_RESULT"] as const;
+const STAGE_KEYS = ["NN_RESULT", "EVIDENCE_RESULT", "AI_RESULT_1", "AI_REVIEW_RESULT", "FINAL_RESULT"] as const;
 
 function StStageRow({ name, value }: { name: string; value: string }) {
   return (
@@ -114,9 +114,9 @@ function StStageRow({ name, value }: { name: string; value: string }) {
 function StagesTable({ stages }: { stages: ClaimStages }) {
   const rows: [string, string][] = [
     [
-      "ML_RESULT",
-      stages.ML_RESULT
-        ? `${stages.ML_RESULT.prediction ?? "n/a"} (${stages.ML_RESULT.confidence != null ? Math.round(stages.ML_RESULT.confidence * 100) : "n/a"}%)`
+      "NN_RESULT",
+      stages.NN_RESULT
+        ? `${stages.NN_RESULT.prediction ?? "n/a"} (${stages.NN_RESULT.confidence != null ? Math.round(stages.NN_RESULT.confidence * 100) : "n/a"}%)`
         : "not available",
     ],
     [

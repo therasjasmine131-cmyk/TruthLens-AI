@@ -1,8 +1,6 @@
 Flask==3.1.*
 Flask-SQLAlchemy==3.1.*
 Flask-CORS==5.*
-scikit-learn==1.9.*
 pandas==3.0.*
 numpy
-joblib
 gunicorn==23.*

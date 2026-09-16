@@ -20,6 +20,7 @@ import os
 import re
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 ML_DIR = Path(__file__).resolve().parent
@@ -68,12 +69,16 @@ def load_dataset(raw_dir: str | os.PathLike | None = None) -> pd.DataFrame:
 
 
 def stratified_split(df: pd.DataFrame, test_size: float = 0.2, seed: int = 42):
-    """Split into train/test while preserving class proportions."""
-    from sklearn.model_selection import train_test_split
-
-    return train_test_split(
-        df, test_size=test_size, random_state=seed, stratify=df["label"]
-    )
+    """Split into train/test while preserving class proportions (NumPy only)."""
+    rng = np.random.default_rng(seed)
+    df = df.copy().reset_index(drop=True)
+    index = np.zeros(len(df), dtype=bool)
+    for label in df["label"].unique():
+        idxs = np.flatnonzero((df["label"] == label).to_numpy())
+        rng.shuffle(idxs)
+        n_test = int(round(len(idxs) * test_size))
+        index[idxs[:n_test]] = True
+    return df[~index].reset_index(drop=True), df[index].reset_index(drop=True)
 
 
 _CANON_RE = None
@@ -85,6 +90,19 @@ def _canonical_key(text: str) -> str:
     if _CANON_RE is None:
         _CANON_RE = re.compile(r"[^a-z0-9]+")
     return _CANON_RE.sub(" ", text.lower()).strip()
+
+
+def _stratified_group_split(groups: pd.DataFrame, size: float, seed: int):
+    """Split *groups* (already label-tagged) by class while preserving balance."""
+    rng = np.random.default_rng(seed)
+    groups = groups.copy().reset_index(drop=True)
+    index = np.zeros(len(groups), dtype=bool)
+    for label in groups["label"].unique():
+        idxs = np.flatnonzero((groups["label"] == label).to_numpy())
+        rng.shuffle(idxs)
+        n = int(round(len(idxs) * size))
+        index[idxs[:n]] = True
+    return groups[~index].reset_index(drop=True), groups[index].reset_index(drop=True)
 
 
 def group_split(
@@ -100,8 +118,6 @@ def group_split(
     republished/duplicated articles from leaking between training and testing.
     Preserves class proportions using the majority label of each group.
     """
-    from sklearn.model_selection import train_test_split
-
     df = df.copy()
     df["_gkey"] = (df["headline"] + " " + df["text"]).map(_canonical_key)
     group_label = (
@@ -109,13 +125,8 @@ def group_split(
     )
     gdf = group_label.reset_index()
 
-    def _split(groups, size):
-        return train_test_split(
-            groups, test_size=size, random_state=seed, stratify=groups["label"]
-        )
-
-    g_train_all, g_test = _split(gdf, test_size)
-    g_train, g_val = _split(g_train_all, val_size / (1 - test_size))
+    g_train_all, g_test = _stratified_group_split(gdf, test_size, seed)
+    g_train, g_val = _stratified_group_split(g_train_all, val_size / (1 - test_size), seed)
 
     parts = {}
     for name, g in (("train", g_train), ("val", g_val), ("test", g_test)):

@@ -1,5 +1,6 @@
 export type PredictionLabel = "REAL" | "FAKE" | "UNCERTAIN";
 export type Verdict = "REAL" | "FALSE" | "UNVERIFIED";
+export type FinalVerdict = "TRUE" | "FALSE" | "UNVERIFIED";
 
 export interface Probabilities {
   real: number;
@@ -112,7 +113,7 @@ export interface AiReview {
 }
 
 export interface ClaimStages {
-  ML_RESULT?: { prediction: string | null; confidence: number | null };
+  NN_RESULT?: { prediction: string | null; confidence: number | null };
   EVIDENCE_RESULT?: {
     verdict: Verdict;
     confidence: number;
@@ -254,12 +255,36 @@ export interface HistoryPage {
   has_next: boolean;
 }
 
+export type VerifyLanguageMode = "auto" | "english" | "tamil" | "tanglish";
+
+export interface VerifyResponse {
+  status: string;
+  final_verdict: FinalVerdict;
+  confidence: number;
+  reasoning: string;
+  language_mode: VerifyLanguageMode;
+  language_detected?: string;
+  claims_analyzed: number;
+  evidence_items: number;
+  sources_used: string[];
+  evidence_matrix: VerificationEvidence[];
+  claims: VerificationClaim[];
+  live_check: LiveCheck | null;
+  verification: Verification | null;
+  stages?: UnknownRecord | null;
+  notes?: { verdict_basis?: string };
+}
+
+export interface UnknownRecord {
+  [key: string]: unknown;
+}
+
 export interface HealthStatus {
   status: string;
   backend: { status: string };
   database: { status: string; healthy: boolean };
   model: { status: string; model?: string; error?: string };
-  vectorizer: { status: string; ready: boolean };
+  neural_network: { status: string; ready: boolean; architecture?: string };
   model_name?: string;
 }
 

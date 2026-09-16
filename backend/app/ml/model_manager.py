@@ -1,8 +1,10 @@
-"""Model manager.
+"""Model manager (pure-NumPy neural network).
 
-Loads the trained artifacts (``best_model.joblib``, ``best_vectorizer.joblib``,
-``model_metadata.json``) from disk once and serves predictions. The loader is
-lazy so the API can boot (and report health) even when artifacts are missing.
+Loads the trained neural-network artifacts from ``models/fake_news_neural_network``
+(``weights.npz``, ``vocab.json``, ``config.json``, ``model_metadata.json``) once
+and serves predictions with a pure-NumPy BiGRU forward pass - no PyTorch, no
+scikit-learn. The loader is lazy so the API can boot (and report health) even
+when artifacts are missing.
 """
 
 from __future__ import annotations
@@ -11,7 +13,6 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import joblib
 import numpy as np
 
 from ..config import Config
@@ -20,51 +21,51 @@ from ..config import Config
 @dataclass
 class ModelBundle:
     model: object
-    vectorizer: object
+    vocab: object
+    config: dict
     metadata: dict
-    feature_names: list[str] = field(default_factory=list)
-    feature_importances: list[float] = field(default_factory=list)
     load_error: str | None = None
     _loaded: bool = False
 
 
 class ModelManager:
-    def __init__(self, artifacts_dir: str | Path | None = None) -> None:
-        self.artifacts_dir = Path(artifacts_dir or Config.ML_ARTIFACTS_DIR)
+    def __init__(self, nn_dir: str | Path | None = None) -> None:
+        self.nn_dir = Path(nn_dir or Config.NN_MODEL_DIR)
         self.bundle: ModelBundle | None = None
 
     # ---- loading ---------------------------------------------------------
     def load(self) -> ModelBundle | None:
-        """Load (or reload) the artifacts. Returns the bundle or None."""
-        model_path = self.artifacts_dir / "best_model.joblib"
-        vectorizer_path = self.artifacts_dir / "best_vectorizer.joblib"
-        metadata_path = self.artifacts_dir / "model_metadata.json"
+        """Load (or reload) the NumPy artifacts. Returns the bundle or None."""
+        weights_path = self.nn_dir / "weights.npz"
+        vocab_path = self.nn_dir / "vocab.json"
+        config_path = self.nn_dir / "config.json"
+        metadata_path = self.nn_dir / "model_metadata.json"
 
-        if not all(p.exists() for p in (model_path, vectorizer_path, metadata_path)):
+        if not all(p.exists() for p in (weights_path, vocab_path, config_path, metadata_path)):
             self.bundle = None
             return None
 
         try:
-            model = joblib.load(model_path)
-            vectorizer = joblib.load(vectorizer_path)
+            config = json.loads(config_path.read_text(encoding="utf-8"))
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            feature_names = list(vectorizer.get_feature_names_out())
-            clf = model.named_steps["clf"]
-            importances = (
-                list(np.asarray(clf.feature_importances_, dtype=float))
-                if hasattr(clf, "feature_importances_")
-                else []
-            )
+            weights = np.load(weights_path)
+
+            from ml.nn_forward import NumpyBiGRU
+            from ml.nn_tokenize import Vocab
+
+            model = NumpyBiGRU(dict(weights), config)
+            vocab = Vocab(json.loads(vocab_path.read_text(encoding="utf-8")))
             self.bundle = ModelBundle(
                 model=model,
-                vectorizer=vectorizer,
+                vocab=vocab,
+                config=config,
                 metadata=metadata,
-                feature_names=feature_names,
-                feature_importances=importances,
                 _loaded=True,
             )
         except Exception as exc:  # noqa: BLE001
-            self.bundle = ModelBundle(model=None, vectorizer=None, metadata={}, load_error=str(exc))
+            self.bundle = ModelBundle(
+                model=None, vocab=None, config={}, metadata={}, load_error=str(exc)
+            )
         return self.bundle
 
     @property
@@ -78,42 +79,27 @@ class ModelManager:
             return {}
         return self.bundle.metadata
 
+    def max_len(self) -> int:
+        return int(self.bundle.config.get("max_len", 400)) if self.ready else 400
+
     # ---- prediction ------------------------------------------------------
     def predict_proba(self, text: str):
         """Return (p_real, p_fake) or raise when model is unavailable."""
         if not self.ready:
             raise RuntimeError("ML model is not available. Train the model first.")
-        model = self.bundle.model
-        vectorizer = self.bundle.vectorizer
-        if hasattr(model, "named_steps") and "clf" in model.named_steps:
-            # Full pipeline: vectorizer is embedded, classifier is the last step.
-            clf = model.named_steps["clf"]
-            vec = model[:-1]
-        else:
-            # Bare classifier trained on a separately-saved vectorizer.
-            clf = model
-            vec = vectorizer
-        proba = clf.predict_proba(vec.transform([text]))[0]
-        labels = self.bundle.metadata.get("class_labels", ["FAKE", "REAL"])
-        p_real = float(proba[labels.index("REAL")])
-        p_fake = float(proba[labels.index("FAKE")])
-        return p_real, p_fake
+        ids = self.bundle.vocab.ids_of(text, self.max_len())
+        return self.bundle.model.proba(ids)
 
-    def top_tfidf_terms(self, text: str, top_n: int = 10) -> list[dict]:
-        """TF-IDF-weighted keywords for one document, computed from the model's
-        own vectorizer (not hard-coded)."""
+    def top_keywords(self, text: str, top_n: int = 10) -> list[dict]:
+        """Neural keywords: per-token hidden-state influence for *text*.
+
+        Ranks words by how much the BiGRU hidden state changes when that token
+        is processed (forward + backward directions) - the model's own notion
+        of which terms moved its REAL/FAKE signal.
+        """
         if not self.ready:
             return []
-        vec = self.bundle.vectorizer.transform([text])
-        scores = vec.toarray()[0]
-        order = np.argsort(scores)[::-1][:top_n]
-        terms = []
-        names = self.bundle.feature_names
-        for idx in order:
-            if scores[idx] <= 0:
-                continue
-            terms.append({"term": names[idx], "score": round(float(scores[idx]), 4)})
-        return terms
+        return self.bundle.model.keywords(text, self.bundle.vocab, self.max_len(), top_n)
 
     def status(self) -> dict:
         if self.ready:

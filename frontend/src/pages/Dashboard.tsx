@@ -187,7 +187,7 @@ export function Dashboard() {
       {/* ---- Model health ---- */}
       <div className="mt-6">
         <Card>
-          <CardHeader title="Model Health" subtitle="Live status of the deployed ML stack" />
+          <CardHeader title="Model Health" subtitle="Live status of the deployed neural-network stack" />
           <div className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
             <HealthTile
               icon={Server}
@@ -210,9 +210,10 @@ export function Dashboard() {
             />
             <HealthTile
               icon={Layers}
-              label="TF-IDF Vectorizer"
-              value={health?.vectorizer?.ready ? "READY" : "UNAVAILABLE"}
-              ok={health?.vectorizer?.ready === true}
+              label="Neural Network"
+              value={health?.neural_network?.ready ? "READY" : "UNAVAILABLE"}
+              ok={health?.neural_network?.ready === true}
+              sub={health?.neural_network?.architecture}
             />
           </div>
         </Card>

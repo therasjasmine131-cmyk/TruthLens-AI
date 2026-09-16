@@ -1,15 +1,19 @@
-"""TruthLens AI - reproducible training pipeline.
+"""TruthLens AI - neural network training pipeline.
 
-Usage:
-    python ml/train.py                     # uses ISOT (if raw CSVs present) else bundled sample
-    python ml/train.py --test-size 0.2 --seed 42
-    python ml/train.py --sample            # force the bundled sample
+Reproducible PyTorch training of the BiGRU classifier. The trained weights are
+exported to ``models/fake_news_neural_network/`` together with ``vocab.json``,
+``config.json`` and ``metrics.json`` so the API can serve predictions with pure
+NumPy (no torch required in production).
 
-The pipeline performs a leakage-safe train/validation/test split (grouping
-canonical near-duplicates so republished articles never appear in two folds),
-fits the TF-IDF vectorisers on the training folds only, trains five models
-including a word+character n-gram ensemble and selects the best one by
-validation F1. The winning pipeline is saved under ``ml/artifacts/``.
+Usage::
+
+    python ml/train.py                        # full ISOT, all defaults
+    python ml/train.py --max-len 360 --epochs 12 --batch-size 128
+    python ml/train.py --limit 5000           # fast smoke run on a slice
+    python ml/train.py --sample               # force the bundled sample
+
+PyTorch is a *training-time* dependency only (``pip install torch``); it is
+NOT required to run the backend or the NumPy forward pass.
 """
 
 from __future__ import annotations
@@ -20,243 +24,349 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-import joblib
 import numpy as np
 import pandas as pd
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (
-    accuracy_score,
-    confusion_matrix,
-    f1_score,
-    precision_score,
-    recall_score,
-    roc_auc_score,
-    roc_curve,
-)
-from sklearn.naive_bayes import MultinomialNB
-from sklearn.pipeline import FeatureUnion, Pipeline
-from sklearn.svm import LinearSVC
 
-from ml.dataset import LABEL_FAKE, LABEL_REAL, load_dataset, group_split
-from ml.preprocess import clean_for_features
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-ARTIFACTS_DIR = Path(__file__).resolve().parent / "artifacts"
-DATA_DIR = Path(__file__).resolve().parent / "data"
+from ml.dataset import LABEL_FAKE, LABEL_REAL, SAMPLE_CSV, group_split, load_dataset  # noqa: E402
+from ml.nn_forward import build_weights_from_torch  # noqa: E402
+from ml.nn_tokenize import Vocab, build_vocab  # noqa: E402
 
+try:  # torch is a dev dependency used only by this training script
+    import torch
+    import torch.nn as nn
+except ImportError:  # pragma: no cover - only hit when torch is missing
+    raise SystemExit(
+        "PyTorch is required to train the model:  pip install torch"
+    ) from None
+
+MODEL_ROOT = Path(__file__).resolve().parent.parent / "models" / "fake_news_neural_network"
 SEED = 42
-CLASSES = [LABEL_FAKE, LABEL_REAL]
-
-FULL_TFIDF_PARAMS = dict(
-    max_features=30000,
-    min_df=3,
-    max_df=0.80,
-    ngram_range=(1, 2),
-    sublinear_tf=True,
-    strip_accents="unicode",
-)
-
-WORD_CHAR_TFIDF_W = dict(
-    max_features=20000,
-    min_df=2,
-    max_df=0.85,
-    ngram_range=(1, 2),
-    sublinear_tf=True,
-    strip_accents="unicode",
-)
-WORD_CHAR_TFIDF_C = dict(
-    max_features=20000,
-    min_df=3,
-    max_df=0.90,
-    ngram_range=(2, 5),
-    analyzer="char_wb",
-    sublinear_tf=True,
-    strip_accents="unicode",
-)
-
-RF_TFIDF_PARAMS = dict(max_features=5000, min_df=3, max_df=0.85, ngram_range=(1, 1), sublinear_tf=True)
+CLASSES = [LABEL_FAKE, LABEL_REAL]  # index 0 = FAKE, index 1 = REAL
 
 
-def _text_column(df: pd.DataFrame) -> pd.Series:
-    return (df["headline"] + " " + df["text"]).str.strip().map(clean_for_features)
+class BiGRUNet(nn.Module):
+    """Embedding -> bidirectional GRU -> dense -> ReLU -> 2-class output."""
+
+    def __init__(self, vocab_size: int, embed_dim: int, hidden_dim: int,
+                 dense_dim: int, num_classes: int = 2, dropout: float = 0.0) -> None:
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=0)
+        self.gru_f = nn.GRUCell(embed_dim, hidden_dim)
+        self.gru_b = nn.GRUCell(embed_dim, hidden_dim)
+        self.dense = nn.Linear(hidden_dim * 2, dense_dim)
+        self.drop = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.out = nn.Linear(dense_dim, num_classes)
+
+    def forward(self, x: torch.Tensor):
+        emb = self.embedding(x)                # (B, T, E) with trailing padding
+        # only process real tokens; running the GRU over hundreds of padding
+        # steps collapses the final hidden state to a padding fixed point
+        tmax = int(x.ne(0).sum(dim=1).max().clamp_min(1).item())
+        h = torch.zeros(x.size(0), self.gru_f.hidden_size, device=x.device)
+        for t in range(tmax):
+            h = self.gru_f(emb[:, t], h)
+        hb = torch.zeros(x.size(0), self.gru_b.hidden_size, device=x.device)
+        for t in range(tmax - 1, -1, -1):
+            hb = self.gru_b(emb[:, t], hb)
+        v = torch.cat([h, hb], dim=1)
+        v = torch.relu(self.dense(v))
+        v = self.drop(v)
+        return self.out(v)
 
 
-def _calibrated_linear_svc() -> CalibratedClassifierCV:
-    return CalibratedClassifierCV(
-        LinearSVC(C=1.0, max_iter=5000, random_state=SEED, class_weight="balanced"), cv=3
-    )
+def _torch_model(vocab_size, embed_dim, hidden_dim, dense_dim, dropout) -> BiGRUNet:
+    torch.manual_seed(SEED)
+    np.random.seed(SEED)
+    return BiGRUNet(vocab_size, embed_dim, hidden_dim, dense_dim, dropout=dropout)
 
 
-def _evaluate(pipeline: Pipeline, X, y_true) -> dict:
-    y_pred = pipeline.predict(X)
-    metrics = {
-        "accuracy": float(accuracy_score(y_true, y_pred)),
-        "precision": float(precision_score(y_true, y_pred, pos_label=LABEL_REAL)),
-        "recall": float(recall_score(y_true, y_pred, pos_label=LABEL_REAL)),
-        "f1": float(f1_score(y_true, y_pred, pos_label=LABEL_REAL)),
-        "confusion_matrix": confusion_matrix(y_true, y_pred, labels=CLASSES).tolist(),
-        "support": int(len(y_true)),
+
+
+
+def _evaluate(model: BiGRUNet, ids: np.ndarray, labels: np.ndarray, batch_size: int = 256) -> dict:
+    """Honest metrics on held-out data (no leakage, real predictions)."""
+    model.eval()
+    all_probs: list[np.ndarray] = []
+    all_y: list[np.ndarray] = []
+    with torch.inference_mode():
+        for i in range(0, len(ids), batch_size):
+            batch = torch.from_numpy(ids[i:i + batch_size]).long()
+            logits = model(batch)
+            p = torch.softmax(logits, dim=1).cpu().numpy()
+            all_probs.append(p)
+            all_y.append(labels[i:i + batch_size])
+    prob = np.concatenate(all_probs)
+    y = np.concatenate(all_y)
+
+    pred = prob.argmax(axis=1)
+    p_real = prob[:, 1]
+    y_real = (y == LABEL_REAL).astype(int)
+
+    # ---- metrics (REAL is the positive class, matching the app) ----
+    tp = int(((pred == 1) & (y_real == 1)).sum())
+    fp = int(((pred == 1) & (y_real == 0)).sum())
+    fn = int(((pred == 0) & (y_real == 1)).sum())
+    tn = int(((pred == 0) & (y_real == 0)).sum())
+    precision = tp / (tp + fp) if (tp + fp) else 0.0
+    recall = tp / (tp + fn) if (tp + fn) else 0.0
+    accuracy = (tp + tn) / max(1, len(y))
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+
+    # ROC-AUC via rank statistic (REAL positive)
+    order = np.argsort(p_real)
+    ranks = np.empty_like(order)
+    ranks[order] = np.arange(len(p_real))
+    n_pos = int(y_real.sum())
+    n_neg = len(y_real) - n_pos
+    if n_pos and n_neg:
+        auc = (ranks[y_real == 1].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg)
+    else:
+        auc = 0.5
+
+    return {
+        "accuracy": round(float(accuracy), 4),
+        "precision": round(float(precision), 4),
+        "recall": round(float(recall), 4),
+        "f1": round(float(f1), 4),
+        "roc_auc": round(float(auc), 4),
+        "confusion_matrix": [
+            [tn, fp],
+            [fn, tp],
+        ],
+        "support": int(len(y)),
+        "p_real_mean": round(float(p_real.mean()), 4),
     }
-    try:
-        proba = pipeline.predict_proba(X)
-        metrics["roc_auc"] = float(roc_auc_score(y_true, proba[:, 1]))
-        fpr, tpr, _ = roc_curve(y_true, proba[:, 1], pos_label=LABEL_REAL)
-        idx = np.linspace(0, len(fpr) - 1, 80).round().astype(int)
-        metrics["roc_curve"] = {"fpr": fpr[idx].tolist(), "tpr": tpr[idx].tolist()}
-    except Exception as exc:  # noqa: BLE001 - report but continue
-        metrics["roc_auc"] = None
-        metrics["roc_curve"] = None
-        metrics["roc_error"] = str(exc)
-    return metrics
 
 
-def _leakage_report(X_train, X_val, X_test) -> None:
-    """Cross-fold similarity check: report max cosine to nearest train row."""
-    from sklearn.preprocessing import normalize as _normalize
+class _NpBatcher:
+    """Feeds padded, constant-length ids to the torch model during training."""
 
-    corpus = list(X_train) + list(X_val) + list(X_test)
-    vec = TfidfVectorizer(max_features=20000, min_df=1, ngram_range=(1, 1), sublinear_tf=True)
-    mat = vec.fit_transform(corpus)
-    mat = _normalize(mat, axis=1)
-    n_train = len(X_train)
-    train_block = mat[:n_train]
-    other = mat[n_train:]
-    sims = (other @ train_block.T).toarray()
-    if sims.shape[0] == 0:
-        print("[leak-check] no validation/test rows, skipping")
-        return
-    max_sim = float(sims.max())
-    ratio_near = float((sims.max(axis=1) > 0.95).mean())
-    print(f"[leak-check] max train/other cosine={max_sim:.3f} near-dup(>0.95)={ratio_near:.3f}")
+    def __init__(self, ids: np.ndarray, labels: np.ndarray, batch_size: int) -> None:
+        self.ids = ids
+        self.labels = labels
+        self.batch_size = batch_size
+        self.order = np.random.default_rng(SEED).permutation(len(ids)).copy()
+
+    def __len__(self) -> int:
+        return int(np.ceil(len(self.ids) / self.batch_size))
+
+    def __iter__(self):
+        for start in range(0, len(self.order), self.batch_size):
+            idx = self.order[start:start + self.batch_size]
+            yield torch.from_numpy(self.ids[idx]).long(), torch.from_numpy(self.labels[idx])
 
 
 def train(args) -> None:
     t0 = time.time()
-    df = load_dataset()
-    df = df.drop_duplicates(subset=["headline", "text"])
-    source = df.attrs.get("source", "unknown")
 
-    df_train, df_val, df_test = group_split(df, val_size=0.25, test_size=args.test_size, seed=args.seed)
+    if args.sample:
+        df = pd.read_csv(SAMPLE_CSV)
+        df.attrs["source"] = f"Bundled sample ({len(df)} rows)"
+        source = df.attrs["source"]
+    else:
+        df = load_dataset()
+        source = df.attrs.get("source", "unknown")
+        print(f"[dataset] {source}")
+        df = df.drop_duplicates(subset=["headline", "text"])
 
-    X_train = _text_column(df_train).tolist()
-    y_train = df_train["label"].values
-    X_val = _text_column(df_val).tolist()
-    y_val = df_val["label"].values
-    X_test = _text_column(df_test).tolist()
-    y_test = df_test["label"].values
-
-    print(f"[dataset] {source}")
-    print(f"[split] train={len(X_train)} val={len(X_val)} test={len(X_test)}")
-
-    results: dict = {}
-    artifacts: dict = {}
-    vectorizers: dict = {}
-
-    def fit_pipeline(name, pipe, Xtr, Xv, ytr, yv, vec) -> None:
-        pipe.fit(Xtr, ytr)
-        val_f1 = float(f1_score(yv, pipe.predict(Xv), pos_label=LABEL_REAL))
-        test_metrics = _evaluate(pipe, X_test, y_test)
-        test_metrics["val_f1"] = val_f1
-        results[name] = test_metrics
-        artifacts[name] = pipe
-        vectorizers[name] = vec
-        print(f"[train] {name}: val_f1={val_f1:.4f} test_f1={test_metrics['f1']:.4f}")
-
-    # ---- 1/2) word TF-IDF + logistic regression / calibrated SVM ----
-    tfidf_full = TfidfVectorizer(**FULL_TFIDF_PARAMS)
-    Xtr_full = tfidf_full.fit_transform(X_train)
-    fit_pipeline(
-        "Logistic Regression (word 1-2g)",
-        Pipeline([("tfidf", tfidf_full), ("clf", LogisticRegression(max_iter=3000, C=1.0, random_state=SEED, class_weight="balanced"))]),
-        X_train, X_val, y_train, y_val, tfidf_full,
+    df_train, df_val, df_test = group_split(
+        df, val_size=args.val_size, test_size=args.test_size, seed=args.seed
     )
-    fit_pipeline(
-        "Linear SVM (word 1-2g)",
-        Pipeline([("tfidf", tfidf_full), ("clf", _calibrated_linear_svc())]),
-        X_train, X_val, y_train, y_val, tfidf_full,
+    if args.limit:
+        df_train = df_train.head(args.limit)
+    print(f"[dataset] {source}  ({len(df)} rows, {len(df_train)} train / "
+          f"{len(df_val)} val / {len(df_test)} test)")
+
+    train_texts = (df_train["headline"] + " " + df_train["text"]).tolist()
+    vocab = build_vocab(train_texts, max_words=args.max_words, min_count=args.min_count)
+
+    def _encode(sub):  # (n, max_len) int32 padded arrays
+        arr = np.zeros((len(sub), args.max_len), dtype=np.int64)
+        for i, txt in enumerate((sub["headline"] + " " + sub["text"]).tolist()):
+            ids = vocab.ids_of(txt, args.max_len)
+            arr[i] = ids
+        return arr.copy()
+
+    ids_train = _encode(df_train)
+    ids_val = _encode(df_val)
+    ids_test = _encode(df_test)
+    label_train = df_train["label"].map({LABEL_REAL: 1, LABEL_FAKE: 0}).to_numpy(dtype=np.int64).copy()
+    label_val = df_val["label"].map({LABEL_REAL: 1, LABEL_FAKE: 0}).to_numpy(dtype=np.int64).copy()
+    label_test = df_test["label"].map({LABEL_REAL: 1, LABEL_FAKE: 0}).to_numpy(dtype=np.int64).copy()
+
+    model = _torch_model(vocab.size(), args.embed_dim, args.hidden_dim,
+                         args.dense_dim, args.dropout)
+    opt = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wd)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    print(f"[device] {device}   [max_len] {args.max_len}   [vocab] {vocab.size()}")
+
+    best_val_loss = float("inf")
+    best_state = None
+    patience = 0
+
+    for epoch in range(1, args.epochs + 1):
+        model.train()
+        ep_loss = 0.0
+        n_batch = 0
+        for bx, by in _NpBatcher(ids_train, label_train, args.batch_size):
+            bx, by = bx.to(device), by.to(device)
+            opt.zero_grad()
+            logits = model(bx)
+            loss = nn.functional.cross_entropy(logits, by)
+            loss.backward()
+            opt.step()
+            ep_loss += float(loss.item())
+            n_batch += 1
+
+        val_loss, val_acc = _valid(model, ids_val, label_val, device, args.batch_size)
+        print(f"[epoch {epoch:02d}] loss={ep_loss / n_batch:.4f}  "
+              f"val_loss={val_loss:.4f}  val_acc={val_acc:.4f}")
+
+        if val_loss < best_val_loss - 1e-4:
+            best_val_loss = val_loss
+            best_state = {k: v.clone() for k, v in model.state_dict().items()}
+            patience = 0
+        else:
+            patience += 1
+            if patience >= args.patience:
+                print(f"[early stop] no improvement for {patience} epochs")
+                break
+
+    if best_state is None:
+        best_state = {k: v.clone() for k, v in model.state_dict().items()}
+
+    model.load_state_dict(best_state)
+    test_metrics = _evaluate(model, ids_test, label_test, args.batch_size)
+    val_metrics = _evaluate(model, ids_val, label_val, args.batch_size)
+    print(f"\n[test] accuracy={test_metrics['accuracy']:.4f} precision={test_metrics['precision']:.4f} "
+          f"recall={test_metrics['recall']:.4f} f1={test_metrics['f1']:.4f} "
+          f"roc_auc={test_metrics['roc_auc']:.4f}")
+    print(f"[test confusion matrix] {test_metrics['confusion_matrix']}")
+
+    # ---- export -----------------------------------------------------
+    MODEL_ROOT.mkdir(parents=True, exist_ok=True)
+    weights = build_weights_from_torch(model.state_dict())
+    np.savez(
+        MODEL_ROOT / "weights.npz",
+        embedding=weights["embedding"],
+        gru_f_ih=weights["gru_f_ih"], gru_f_hh=weights["gru_f_hh"],
+        gru_f_b_ih=weights["gru_f_b_ih"], gru_f_b_hh=weights["gru_f_b_hh"],
+        gru_b_ih=weights["gru_b_ih"], gru_b_hh=weights["gru_b_hh"],
+        gru_b_b_ih=weights["gru_b_b_ih"], gru_b_b_hh=weights["gru_b_b_hh"],
+        dense_w=weights["dense_w"], dense_b=weights["dense_b"],
+        out_w=weights["out_w"], out_b=weights["out_b"],
     )
-    fit_pipeline(
-        "Naive Bayes (word 1-2g)",
-        Pipeline([("tfidf", tfidf_full), ("clf", MultinomialNB(alpha=1.0))]),
-        X_train, X_val, y_train, y_val, tfidf_full,
-    )
-
-    # ---- 3) word + character n-gram ensemble + logistic regression ----
-    features = FeatureUnion([
-        ("word", TfidfVectorizer(**WORD_CHAR_TFIDF_W)),
-        ("char", TfidfVectorizer(**WORD_CHAR_TFIDF_C)),
-    ])
-    fit_pipeline(
-        "LogReg word+char (ensemble)",
-        Pipeline([("features", features), ("clf", LogisticRegression(max_iter=3000, C=1.0, random_state=SEED, class_weight="balanced"))]),
-        X_train, X_val, y_train, y_val, features,
-    )
-
-    # ---- 4) Random Forest on a reduced word vectorizer ----
-    tfidf_rf = TfidfVectorizer(**RF_TFIDF_PARAMS)
-    fit_pipeline(
-        "Random Forest (word 1g)",
-        Pipeline([("tfidf", tfidf_rf), ("clf", RandomForestClassifier(n_estimators=200, max_features="sqrt", n_jobs=-1, random_state=SEED, class_weight="balanced"))]),
-        X_train, X_val, y_train, y_val, tfidf_rf,
-    )
-
-    _leakage_report(X_train, X_val, X_test)
-
-    # ---- Best model selection (by validation F1) ----
-    best_name = max(results, key=lambda k: results[k]["val_f1"])
-    best_model = artifacts[best_name]
-    best_vec = vectorizers[best_name]
-    clf = best_model.named_steps["clf"]
-
-    n_features = len(best_vec.vocabulary_) if hasattr(best_vec, "vocabulary_") else best_vec.transform([""]).shape[1]
-    explainability = "coefficients" if clf.__class__.__name__ in (
-        "LogisticRegression",
-        "LinearSVC",
-        "CalibratedClassifierCV",
-        "MultinomialNB",
-    ) else "feature_importance"
+    vocab.save(MODEL_ROOT / "vocab.json")
+    config = {
+        "architecture": "Embedding -> BiGRU -> Dense -> ReLU -> Output",
+        "class_labels": CLASSES,
+        "vocab_size": vocab.size(),
+        "max_len": args.max_len,
+        "embed_dim": args.embed_dim,
+        "hidden_dim": args.hidden_dim,
+        "dense_dim": args.dense_dim,
+        "dropout": args.dropout,
+        "device": str(device),
+    }
+    (MODEL_ROOT / "config.json").write_text(
+        json.dumps(config, indent=2), encoding="utf-8")
 
     metadata = {
-        "best_model": best_name,
-        "explainability": explainability,
-        "model_class": clf.__class__.__name__,
-        "vectorizer": best_vec.__class__.__name__,
+        "best_model": "Neural Network (BiGRU)",
+        "model_class": "BiGRUNet",
+        "vectorizer": f"Word tokenizer (vocab {vocab.size()}, max_len {args.max_len})",
+        "architecture": config["architecture"],
         "dataset_source": source,
-        "train_samples": int(len(X_train)),
-        "validation_samples": int(len(X_val)),
-        "test_samples": int(len(X_test)),
-        "n_features": int(n_features),
-        "class_labels": CLASSES,
-        "classes_": CLASSES,
-        "training_date": pd.Timestamp.now().isoformat(),
+        "train_samples": int(len(ids_train)),
+        "validation_samples": int(len(ids_val)),
+        "test_samples": int(len(ids_test)),
+        "n_features": vocab.size(),
+        "vocab_size": vocab.size(),
+        "training_date": str(pd_now()),
         "random_seed": args.seed,
         "split": "grouped-canonical (leakage-safe)",
-        "metrics": results[best_name],
-        "all_model_metrics": results,
+        "metrics": test_metrics,
+        "val_metrics": val_metrics,
     }
+    (MODEL_ROOT / "model_metadata.json").write_text(
+        json.dumps(metadata, indent=2), encoding="utf-8")
+    (MODEL_ROOT / "metrics.json").write_text(
+        json.dumps({"test": test_metrics, "val": val_metrics,
+                    "config": config, "metadata": metadata}, indent=2),
+        encoding="utf-8")
 
-    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-    joblib.dump(best_model, ARTIFACTS_DIR / "best_model.joblib", compress=4)
-    joblib.dump(best_vec, ARTIFACTS_DIR / "best_vectorizer.joblib", compress=4)
-    with open(ARTIFACTS_DIR / "model_metadata.json", "w", encoding="utf-8") as fh:
-        json.dump(metadata, fh, indent=2)
-    with open(ARTIFACTS_DIR / "model_comparison.json", "w", encoding="utf-8") as fh:
-        json.dump(results, fh, indent=2)
-
-    print(f"\n[best] {best_name} (val_f1={results[best_name]['val_f1']:.4f})")
-    print(f"[features] {n_features}")
-    print(f"[artifacts] {ARTIFACTS_DIR}")
+    _parity_check(model, vocab, args.max_len)
+    print(f"\n[artifacts] {MODEL_ROOT}")
     print(f"[done] {time.time() - t0:.1f}s")
 
 
+def _valid(model, ids, labels, device, batch_size):
+    model.eval()
+    total_loss = 0.0
+    correct = 0
+    with torch.inference_mode():
+        for start in range(0, len(ids), batch_size):
+            bx = torch.from_numpy(ids[start:start + batch_size]).long().to(device)
+            by = torch.from_numpy(labels[start:start + batch_size]).to(device)
+            logits = model(bx)
+            total_loss += float(nn.functional.cross_entropy(logits, by).item())
+            correct += int((logits.argmax(1) == by).sum().item())
+    return total_loss / max(1, (len(ids) + batch_size - 1) // batch_size), \
+        correct / max(1, len(ids))
+
+
+def _parity_check(model: BiGRUNet, vocab: Vocab, max_len: int) -> None:
+    """Verify the NumPy forward matches PyTorch on random inputs (max diff < 1e-4)."""
+    from ml.nn_forward import load_model as _load
+
+    np_model = _load(MODEL_ROOT)
+    model.eval()
+    worst = 0.0
+    with torch.inference_mode():
+        for _ in range(12):
+            ids = torch.randint(0, vocab.size(), (max_len,)).tolist()
+            logits = model(
+                torch.from_numpy(np.asarray(ids)[None]).long()
+            ).softmax(dim=1).cpu().numpy()[0]
+            p_real, p_fake = np_model.proba(ids)
+            diff = max(abs(float(logits[1]) - p_real),
+                       abs(float(logits[0]) - p_fake))
+            worst = max(worst, diff)
+    assert worst < 1e-4, f"numpy/torch parity check failed (max diff {worst})"
+    print(f"[parity] torch vs numpy max prob diff = {worst:.2e}  OK")
+
+
+def pd_now() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Train TruthLens AI classifiers")
+    parser = argparse.ArgumentParser(description="Train the TruthLens BiGRU classifier")
+    parser.add_argument("--max-len", type=int, default=400)
+    parser.add_argument("--max-words", type=int, default=30000)
+    parser.add_argument("--min-count", type=int, default=2)
+    parser.add_argument("--embed-dim", type=int, default=64)
+    parser.add_argument("--hidden-dim", type=int, default=64)
+    parser.add_argument("--dense-dim", type=int, default=64)
+    parser.add_argument("--epochs", type=int, default=12)
+    parser.add_argument("--batch-size", type=int, default=128)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--wd", type=float, default=1e-5)
+    parser.add_argument("--dropout", type=float, default=0.2)
+    parser.add_argument("--patience", type=int, default=3)
     parser.add_argument("--test-size", type=float, default=0.2)
+    parser.add_argument("--val-size", type=float, default=0.15)
     parser.add_argument("--seed", type=int, default=SEED)
+    parser.add_argument("--limit", type=int, default=0,
+                        help="cap training rows (smoke runs)")
+    parser.add_argument("--sample", action="store_true",
+                        help="train on the bundled sample instead of ISOT")
     args = parser.parse_args()
     train(args)
 

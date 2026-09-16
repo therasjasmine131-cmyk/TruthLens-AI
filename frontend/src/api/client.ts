@@ -14,6 +14,8 @@ import type {
   ModelPerformanceData,
   SettingsData,
   TrendingNewsResponse,
+  VerifyLanguageMode,
+  VerifyResponse,
 } from "../types";
 
 
@@ -62,6 +64,16 @@ export const api = {
     apiFetch<AnalysisResult>("/api/analyze/headline", {
       method: "POST",
       body: JSON.stringify({ headline }),
+    }),
+
+  verify: (
+    headline: string,
+    article: string,
+    language: VerifyLanguageMode = "auto",
+  ) =>
+    apiFetch<VerifyResponse>("/api/verify", {
+      method: "POST",
+      body: JSON.stringify({ headline, article, language }),
     }),
 
   batchAnalyze: (rows: { headline: string; article: string }[]) =>

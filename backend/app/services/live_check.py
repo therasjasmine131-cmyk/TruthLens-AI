@@ -1,6 +1,6 @@
 """Gemini-based live knowledge check for news claims.
 
-The ML classifier judges text *style* patterns learned from a 2016-17 US
+The neural network judges text *style* patterns learned from a 2016-17 US
 political dataset. It cannot verify whether an event actually happened, so
 recent or non-US news (for example Indian business headlines) can be
 misfiled as FAKE. This service asks Gemini to verify the claim against its

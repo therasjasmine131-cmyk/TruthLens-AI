@@ -23,9 +23,9 @@ const CARDS: { title: string; icon: typeof BookOpen; body: string }[] = [
     body: "Natural-language processing is the field of AI that lets computers read, understand and derive meaning from human language. Here we use NLP to clean articles, split sentences, count words and convert text into numeric features a classifier can use.",
   },
   {
-    title: "What is TF-IDF?",
+    title: "What is the neural network?",
     icon: Target,
-    body: "Term Frequency–Inverse Document Frequency converts text into numbers. Each word gets a score: how often it appears in this article (term frequency) weighted against how rare it is across the whole training corpus (inverse document frequency). Rare, distinctive words therefore get high scores.",
+    body: "The classifier is a small neural network: an Embedding layer turns each word into a number vector, then a bidirectional GRU reads the article left-to-right and right-to-left, learning which patterns of words are typical of real vs fake reporting. A final layer turns those patterns into a probability.",
   },
   {
     title: "What is supervised learning?",
@@ -33,14 +33,14 @@ const CARDS: { title: string; icon: typeof BookOpen; body: string }[] = [
     body: "Supervised learning trains a model on labelled examples: pairs of text and its known label (REAL or FAKE). The model learns a mapping from text to label, then generalises to new, unseen text.",
   },
   {
-    title: "How does Logistic Regression work?",
+    title: "How does the network make a decision?",
     icon: BarChart3,
-    body: "Logistic regression learns a weighted sum of the TF-IDF features and passes it through the sigmoid function to produce a probability between 0 and 1. Positive weights push toward one class, negative weights toward the other. The weights are exactly what we use for explainability.",
+    body: "Each word is embedded, the bidirectional GRU produces a hidden context vector for the whole article, and the output layer applies a softmax to produce probabilities for REAL and FAKE. Words that move the hidden state the most are the ones the network based its decision on — that is what we surface as explainable keywords.",
   },
   {
-    title: "Why compare multiple models?",
+    title: "Why verify with evidence too?",
     icon: Scale,
-    body: "No single model is universally best. Different algorithms make different assumptions; comparing them on the same held-out test set shows which generalises best to this dataset. We select the best model by validation F1 score.",
+    body: "A stylistic classifier only knows writing patterns; it cannot check facts. TruthLens pairs the network with an evidence pipeline: retrieved sources, source credibility and AI analysis drive a final VERDICT that stays UNVERIFIED when nothing credible confirms or contradicts a claim.",
   },
 ];
 
@@ -115,7 +115,7 @@ export function Methodology() {
         </ul>
         <div className="border-t border-slate-200 px-5 py-4 dark:border-slate-800">
           <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-            This is an ML-based prediction, not proof of factual truth. TruthLens AI reflects
+            This is an AI model prediction, not proof of factual truth. TruthLens AI reflects
             statistical patterns learned from a training dataset and can be wrong. Always verify
             important claims using reliable sources.
           </p>

@@ -13,7 +13,7 @@ logger = logging.getLogger("truthlens.verification_service")
 
 
 def _article_ml(headline: str | None, article: str | None) -> dict | None:
-    """Article-level ML prediction (stylistic signal, not a verdict)."""
+    """Article-level neural-network prediction (stylistic signal, not a verdict)."""
     combined = " ".join(filter(None, [headline, article])).strip()
     if not combined or not model_manager.ready:
         return None
@@ -25,8 +25,8 @@ def _article_ml(headline: str | None, article: str | None) -> dict | None:
             "confidence": round(max(p_real, p_fake), 3),
             "probabilities": {"real": round(p_real, 3), "fake": round(p_fake, 3)},
         }
-    except Exception:  # noqa: BLE001 - ML must never break verification
-        logger.exception("article-level ML signal failed")
+    except Exception:  # noqa: BLE001 - NN must never break verification
+        logger.exception("article-level NN signal failed")
         return None
 
 

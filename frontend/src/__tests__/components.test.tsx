@@ -4,13 +4,13 @@ import { ProgressSteps } from "../components/analyze/ProgressSteps";
 import { EmptyState } from "../components/ui/EmptyState";
 import { PredictionBadge } from "../components/ui/PredictionBadge";
 
-const STEPS = ["Cleaning text", "Running ML classifier", "Calculating confidence"];
+const STEPS = ["Cleaning text", "Encoding tokens", "Running neural network", "Calculating confidence"];
 
 describe("ProgressSteps", () => {
   it("marks completed and active steps", () => {
     render(<ProgressSteps steps={STEPS} activeStep={1} />);
     expect(screen.getByText("Cleaning text")).toBeInTheDocument();
-    expect(screen.getByText("Running ML classifier")).toBeInTheDocument();
+    expect(screen.getByText("Running neural network")).toBeInTheDocument();
     expect(screen.getByText("✓")).toBeInTheDocument();
   });
 });

@@ -1,9 +1,9 @@
 """Final verdict engine: REAL / FALSE / UNVERIFIED with calibrated confidence.
 
-The ML classifier is only one input. The *primary* signal is evidence:
-strong credible support -> REAL, strong credible contradiction -> FALSE,
-otherwise UNVERIFIED. ML is a small agree/disagree modifier only and can never
-override strong contradictory evidence.
+The neural network classifier is only one input. The *primary* signal is
+evidence: strong credible support -> REAL, strong credible contradiction ->
+FALSE, otherwise UNVERIFIED. The network is a small agree/disagree modifier
+only and can never override strong contradictory evidence.
 """
 
 from __future__ import annotations
@@ -222,7 +222,7 @@ def final_decision_for_claim(
     if ml_pred in (VERDICT_REAL, VERDICT_FALSE) and verdict in (VERDICT_REAL, VERDICT_FALSE) \
             and ml_pred != verdict:
         conflicts.append(
-            f"ML classifier leans {ml_pred} while evidence/AI suggest {verdict} - "
+            f"Neural network leans {ml_pred} while evidence/AI suggest {verdict} - "
             "disagreement flagged for investigation."
         )
     if ai_verdict and verdict in (VERDICT_REAL, VERDICT_FALSE) and ai_verdict != verdict:

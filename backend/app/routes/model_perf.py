@@ -1,4 +1,4 @@
-"""Model performance: real, measured metrics from training artifacts."""
+"""Model performance: real, measured metrics from the trained neural network."""
 
 from __future__ import annotations
 
@@ -11,14 +11,14 @@ from ..ml.model_manager import model_manager
 
 bp = Blueprint("model_perf", __name__, url_prefix="/api/model-performance")
 
-COMPARISON_FILE = Config.ML_ARTIFACTS_DIR / "model_comparison.json"
-METADATA_FILE = Config.ML_ARTIFACTS_DIR / "model_metadata.json"
+METRICS_FILE = Config.NN_MODEL_DIR / "metrics.json"
+METADATA_FILE = Config.NN_MODEL_DIR / "model_metadata.json"
 
 
 @bp.get("")
 def model_performance():
-    """Return the measured comparison data. Empty result when untrained."""
-    if not COMPARISON_FILE.exists() or not METADATA_FILE.exists():
+    """Return the measured metrics for the trained network. Empty when untrained."""
+    if not METRICS_FILE.exists() or not METADATA_FILE.exists():
         return jsonify(
             {
                 "trained": False,
@@ -28,44 +28,46 @@ def model_performance():
             }
         )
 
-    comparison = json.loads(COMPARISON_FILE.read_text(encoding="utf-8"))
+    metrics_doc = json.loads(METRICS_FILE.read_text(encoding="utf-8"))
     metadata = json.loads(METADATA_FILE.read_text(encoding="utf-8"))
+    test = metrics_doc.get("test", {})
+    val = metrics_doc.get("val", {})
 
-    models = []
-    for name, metrics in comparison.items():
-        models.append(
-            {
-                "name": name,
-                "accuracy": metrics.get("accuracy"),
-                "precision": metrics.get("precision"),
-                "recall": metrics.get("recall"),
-                "f1": metrics.get("f1"),
-                "roc_auc": metrics.get("roc_auc"),
-                "val_f1": metrics.get("val_f1"),
-                "support": metrics.get("support"),
-                "confusion_matrix": metrics.get("confusion_matrix"),
-                "roc_curve": metrics.get("roc_curve"),
-            }
-        )
+    model = metadata.get("best_model", "Neural Network (BiGRU)")
+    models = [
+        {
+            "name": model,
+            "architecture": metadata.get("architecture"),
+            "accuracy": test.get("accuracy"),
+            "precision": test.get("precision"),
+            "recall": test.get("recall"),
+            "f1": test.get("f1"),
+            "roc_auc": test.get("roc_auc"),
+            "val_accuracy": val.get("accuracy"),
+            "val_f1": val.get("f1"),
+            "support": test.get("support"),
+            "confusion_matrix": test.get("confusion_matrix"),
+        }
+    ]
 
-    best_metrics = metadata.get("metrics", {})
     return jsonify(
         {
             "trained": True,
-            "best_model": metadata.get("best_model"),
+            "best_model": model,
             "best_metrics": {
-                "accuracy": best_metrics.get("accuracy"),
-                "precision": best_metrics.get("precision"),
-                "recall": best_metrics.get("recall"),
-                "f1": best_metrics.get("f1"),
-                "roc_auc": best_metrics.get("roc_auc"),
+                "accuracy": test.get("accuracy"),
+                "precision": test.get("precision"),
+                "recall": test.get("recall"),
+                "f1": test.get("f1"),
+                "roc_auc": test.get("roc_auc"),
             },
-            "best_confusion_matrix": best_metrics.get("confusion_matrix"),
+            "best_confusion_matrix": test.get("confusion_matrix"),
             "models": models,
             "dataset_source": metadata.get("dataset_source"),
             "train_samples": metadata.get("train_samples"),
             "test_samples": metadata.get("test_samples"),
-            "n_features": metadata.get("n_features"),
+            "n_features": metadata.get("vocab_size"),
+            "forward_pass": "NumPy BiGRU (no torch/runtime deps)",
             "training_date": metadata.get("training_date"),
             "class_labels": metadata.get("class_labels"),
         }

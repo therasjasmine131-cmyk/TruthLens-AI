@@ -148,13 +148,13 @@ export function ModelPerformance() {
             <ConfigField label="Class Labels" value={data.class_labels?.join(" / ") ?? "—"} />
             <ConfigField label="Training Samples" value={(data.train_samples ?? 0).toLocaleString()} />
             <ConfigField label="Test Samples" value={(data.test_samples ?? 0).toLocaleString()} />
-            <ConfigField label="Number of Features" value={(data.n_features ?? 0).toLocaleString()} />
+            <ConfigField label="Vocabulary Size" value={(data.n_features ?? 0).toLocaleString()} />
             <ConfigField label="Training Date" value={data.training_date ? new Date(data.training_date).toLocaleDateString() : "—"} />
             <ConfigField label="Model" value={data.best_model ?? "—"} />
-            <ConfigField label="Split Method" value="Stratified 60/20/20" />
+            <ConfigField label="Split Method" value="Leakage-safe grouped split" />
           </div>
           <p className="px-5 pb-5 text-[11px] text-slate-400 dark:text-slate-500">
-            All metrics are measured on the held-out test set and stored in ml/artifacts — nothing is
+            All metrics are measured on the held-out test set and stored in models/fake_news_neural_network — nothing is
             fabricated.
           </p>
         </Card>

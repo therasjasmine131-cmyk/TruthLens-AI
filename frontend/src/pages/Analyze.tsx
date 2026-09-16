@@ -25,8 +25,8 @@ import type { AnalysisResult, DemoArticle } from "../types";
 const ANALYSIS_STEPS = [
   "Reading article",
   "Cleaning text",
-  "Extracting NLP features",
-  "Running ML classifier",
+  "Encoding tokens",
+  "Running neural network",
   "Calculating confidence",
   "Preparing explanation",
 ];
@@ -103,7 +103,7 @@ export function Analyze() {
           <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
             <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Analyze an article</h2>
             <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-              The text is analyzed with TF-IDF features and the trained classifier.
+              The text is analyzed by a neural network (BiGRU) and cross-checked with live evidence.
             </p>
           </div>
           <div className="space-y-4 p-5">

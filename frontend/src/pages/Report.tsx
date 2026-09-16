@@ -174,7 +174,7 @@ h1{font-size:20px}h2{font-size:15px;margin-top:24px;border-bottom:2px solid #eef
           </table>
 
           {/* Keywords */}
-          <h2>TF-IDF Keywords</h2>
+          <h2>Neural Keywords</h2>
           <div className="flex flex-wrap gap-2">
             {data.keywords?.length ? (
               data.keywords.map((k) => (
@@ -211,18 +211,18 @@ h1{font-size:20px}h2{font-size:15px;margin-top:24px;border-bottom:2px solid #eef
           <table>
             <tbody>
               <tr><td className="w-1/2">Model</td><td>{String(data.model_info?.name ?? "—")}</td></tr>
-              <tr><td>Vectorizer</td><td>{String(data.model_info?.vectorizer ?? "—")}</td></tr>
+              <tr><td>Tokenizer</td><td>{String(data.model_info?.vectorizer ?? "—")}</td></tr>
               <tr><td>Training Dataset</td><td>{String(data.model_info?.dataset_source ?? "—")}</td></tr>
               <tr><td>Training Samples</td><td>{Number(data.model_info?.train_samples ?? 0).toLocaleString()}</td></tr>
               <tr><td>Test Samples</td><td>{Number(data.model_info?.test_samples ?? 0).toLocaleString()}</td></tr>
-              <tr><td>Number of Features</td><td>{Number(data.model_info?.n_features ?? 0).toLocaleString()}</td></tr>
+              <tr><td>Vocabulary Size</td><td>{Number(data.model_info?.n_features ?? 0).toLocaleString()}</td></tr>
             </tbody>
           </table>
 
           <h2>Model Performance on Test Dataset</h2>
           <p className="text-xs text-slate-500">
-            Measured on a held-out test set that was not used to train the model (stratified split,
-            TF-IDF fitted on training folds only). This is not a guarantee of accuracy on
+            Measured on a held-out test set that was not used to train the model (leakage-safe grouped split,
+            vocabulary built from the training split only). This is not a guarantee of accuracy on
             real-world news.
           </p>
           <table>

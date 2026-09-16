@@ -256,7 +256,7 @@ def test_verify_text_debug_stages_filled(monkeypatch):
     report = ver.verify_text("The Earth revolves around the Sun.", include_debug=True)
     assert report["stages"] is not None
     stages = report["claims"][0]["stages"]
-    assert set(stages) == {"ML_RESULT", "EVIDENCE_RESULT", "AI_RESULT_1",
+    assert set(stages) == {"NN_RESULT", "EVIDENCE_RESULT", "AI_RESULT_1",
                            "AI_REVIEW_RESULT", "FINAL_RESULT"}
     assert stages["FINAL_RESULT"]["verdict"] == "REAL"
 

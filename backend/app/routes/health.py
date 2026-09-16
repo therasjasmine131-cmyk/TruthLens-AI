@@ -1,4 +1,4 @@
-"""Health endpoint: reports backend, database, model and vectorizer status."""
+"""Health endpoint: reports backend, database, model and NN status."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def _database_status() -> dict:
 @bp.get("")
 def health():
     model_status = model_manager.status()
-    vectorizer_ready = bool(model_manager.ready)
+    model_ready = bool(model_manager.ready)
 
     return jsonify(
         {
@@ -30,9 +30,10 @@ def health():
             "backend": {"status": "healthy"},
             "database": _database_status(),
             "model": model_status,
-            "vectorizer": {
-                "status": "ready" if vectorizer_ready else "unavailable",
-                "ready": vectorizer_ready,
+            "neural_network": {
+                "status": "ready" if model_ready else "unavailable",
+                "ready": model_ready,
+                "architecture": model_manager.metadata().get("architecture"),
             },
             "model_name": model_manager.metadata().get("best_model"),
         }
