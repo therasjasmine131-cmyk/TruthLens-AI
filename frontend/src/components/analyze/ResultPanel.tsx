@@ -124,9 +124,9 @@ export function ResultPanel({
                 <p className={`mt-2 flex items-start gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] leading-relaxed ${VERDICT_STYLES[finalVerdict].pill}`}>
                   <span className="mt-px shrink-0">✓</span>
                   <span>
-                    <strong>Validated by Gemini:</strong>{" "}
+                    <strong>Validated by AI:</strong>{" "}
                     {result.verification.gemini_validation.reasoning ||
-                      "Gemini reviewed this verdict and explained its reasoning."}
+                      "The AI reviewed this verdict and explained its reasoning."}
                   </span>
                 </p>
               )}
@@ -148,8 +148,8 @@ export function ResultPanel({
               <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">AI Verdict</h3>
               <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
                 {result.ai_verdict.source === "gemini"
-                  ? "Google Gemini cross-check against its knowledge of real-world reporting"
-                  : "Based on retrieved evidence and independent AI analysis"}
+                    ? "Independent AI cross-check against global reporting and evidence"
+                    : "Based on retrieved evidence and independent AI analysis"}
               </p>
             </div>
           </div>
@@ -157,7 +157,7 @@ export function ResultPanel({
             <div className="flex flex-col items-start gap-2 sm:min-w-[200px]">
               <LiveCheckBadge label={result.ai_verdict.verdict} confidence={result.ai_verdict.confidence} />
               <p className="text-[11px] text-slate-400 dark:text-slate-500">
-                {result.ai_verdict.source === "gemini" ? "Source: Google Gemini" : "Source: Evidence + AI"}
+                {result.ai_verdict.source === "gemini" ? "Source: independent AI review" : "Source: Evidence + AI"}
               </p>
             </div>
             <p className="flex-1 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
@@ -177,7 +177,7 @@ export function ResultPanel({
                 Live Knowledge Check
               </h3>
               <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                Gemini cross-check against its knowledge of real-world reporting
+                AI cross-check against global reporting and evidence
               </p>
             </div>
           </div>

@@ -451,17 +451,17 @@ export function VerificationSection({ verification }: { verification: Verificati
         )}
       </Card>
 
-      {/* Gemini final validation */}
+      {/* AI final validation */}
       {verification.gemini_validation && verification.gemini_validation.label && (
         <Card className="overflow-hidden border-indigo-200 dark:border-indigo-900/60">
           <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-4 dark:border-slate-800">
             <Sparkles size={16} className="text-indigo-500" />
             <div>
               <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                Gemini Final Validation
+                AI Final Validation
               </h3>
               <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                After the pipeline result, Gemini independently reviewed the article and explains why.
+                After the pipeline result, the AI independently reviewed the article and explains why.
               </p>
             </div>
           </div>
@@ -472,7 +472,7 @@ export function VerificationSection({ verification }: { verification: Verificati
                 Validates {verification.gemini_validation.label === "REAL" ? "REAL" : verification.gemini_validation.label === "FALSE" ? "FAKE" : "UNVERIFIED"}
               </span>
               <p className="text-[11px] text-slate-400 dark:text-slate-500">
-                Gemini confidence {Math.round(verification.gemini_validation.confidence * 100)}%
+                AI confidence {Math.round(verification.gemini_validation.confidence * 100)}%
               </p>
               {verification.gemini_validation.agrees ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">

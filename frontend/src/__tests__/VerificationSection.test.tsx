@@ -143,10 +143,10 @@ describe("VerificationSection", () => {
     expect(screen.getByText("SUPPORTS")).toBeInTheDocument();
   });
 
-  it("shows the Gemini final validation card with the WHY reasoning", () => {
-    // default report has no gemini validation -> card is hidden
+  it("shows the AI final validation card with the WHY reasoning", () => {
+    // default report has no AI final validation -> card is hidden
     renderVerification();
-    expect(screen.queryByText("Gemini Final Validation")).not.toBeInTheDocument();
+    expect(screen.queryByText("AI Final Validation")).not.toBeInTheDocument();
 
     const withGemini: Verification = {
       ...SAMPLE_VERIFICATION,
@@ -161,7 +161,7 @@ describe("VerificationSection", () => {
       },
     };
     render(<VerificationSection verification={withGemini} />);
-    expect(screen.getByText("Gemini Final Validation")).toBeInTheDocument();
+    expect(screen.getByText("AI Final Validation")).toBeInTheDocument();
     expect(screen.getByText(/Validates FAKE/)).toBeInTheDocument();
     expect(screen.getByText(/Agrees with the evidence verdict/)).toBeInTheDocument();
     expect(
@@ -169,7 +169,7 @@ describe("VerificationSection", () => {
     ).toBeInTheDocument();
   });
 
-  it("marks a Gemini disagreement instead of blind agreement", () => {
+  it("marks an AI disagreement instead of blind agreement", () => {
     const disagreeing: Verification = {
       ...SAMPLE_VERIFICATION,
       gemini_validation: {
