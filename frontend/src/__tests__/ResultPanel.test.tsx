@@ -54,12 +54,12 @@ function renderPanel() {
 }
 
 describe("ResultPanel", () => {
-  it("renders prediction, confidence and probability cards", () => {
+  it("renders the single end-to-end flow map", () => {
     renderPanel();
-    expect(screen.getAllByText("REAL").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("92.4%").length).toBeGreaterThan(0);
-    expect(screen.getByText("Very High Confidence")).toBeInTheDocument();
-    expect(screen.getByText("Probability Distribution")).toBeInTheDocument();
+    expect(screen.getByText("How TruthLens Works")).toBeInTheDocument();
+    expect(screen.getByText("One end-to-end pipeline — every step is executed and logged on the backend.")).toBeInTheDocument();
+    expect(screen.getByText(/Claim extraction — split the text into atomic checkable claims/)).toBeInTheDocument();
+    expect(screen.getByText(/then AI final validation explains WHY it is real, fake, or unverified/)).toBeInTheDocument();
   });
 
   it("does not show a manufactured UNCERTAIN percentage for a decided prediction", () => {
@@ -97,7 +97,7 @@ describe("ResultPanel", () => {
     expect(screen.getByText("FALSE")).toBeInTheDocument();
   });
 
-  it("shows an abstain note and no fake uncertainty for an UNCERTAIN result", () => {
+  it("does not show a manufactured abstain card for an undecided result", () => {
     render(
       <MemoryRouter>
         <ResultPanel
@@ -106,7 +106,7 @@ describe("ResultPanel", () => {
         />
       </MemoryRouter>
     );
-    expect(screen.getAllByText(/UNCERTAIN \(abstain\)/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/abstain decision/i)).toBeInTheDocument();
+    expect(screen.queryByText(/UNCERTAIN \(abstain\)/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/abstain decision/i)).not.toBeInTheDocument();
   });
 });

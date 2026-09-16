@@ -2,7 +2,6 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  ShieldCheck,
   FileBarChart,
   GitCompareArrows,
   ChevronDown,
@@ -18,10 +17,7 @@ import {
 import type { AnalysisResult } from "../../types";
 import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
-import { PredictionBadge } from "../ui/PredictionBadge";
-import { ConfidenceGauge } from "../charts/ConfidenceGauge";
 import { HorizontalBars, ExplanationBars } from "../charts/HorizontalBars";
-import { Disclaimer } from "../ui/PageHeader";
 import { VerificationSection } from "./VerificationSection";
 import { formatPercent } from "../../lib/utils";
 
@@ -37,42 +33,18 @@ const STAT_META: { key: keyof AnalysisResult["article_stats"]; label: string }[]
   { key: "question_marks", label: "Question Marks" },
 ];
 
-function ProbCard({
-  label,
-  value,
-  icon,
-  tone,
-}: {
-  label: string;
-  value: number;
-  icon: typeof ShieldCheck;
-  tone: string;
-}) {
-  const Icon = icon;
-  return (
-    <div className={cn_("rounded-lg border bg-slate-50 px-4 py-3 dark:bg-slate-900/60", tone)}>
-      <div className="flex items-center justify-between">
-        <span className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">
-          <Icon size={13} />
-          {label}
-        </span>
-        <span className="text-sm font-bold tabular-nums text-slate-900 dark:text-slate-50">
-          {formatPercent(value)}
-        </span>
-      </div>
-      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
-        <div
-          className={cn_("h-full rounded-full transition-all duration-700", tone === "text-emerald-600 dark:text-emerald-400" ? "bg-emerald-500" : tone === "text-rose-600 dark:text-rose-400" ? "bg-rose-500" : "bg-amber-500")}
-          style={{ width: `${Math.round(value * 100)}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-
-function cn_(...parts: (string | false | undefined | null)[]) {
-  return parts.filter(Boolean).join(" ");
-}
+const FLOW_STEPS = [
+  "User input — headline and/or article text",
+  "Language detection — auto / English / Tamil / Tanglish",
+  "Preprocessing — clean, tokenize, truncate to 320 tokens",
+  "Claim extraction — split the text into atomic checkable claims",
+  "Evidence retrieval — search a knowledge base and live sources, never inventing sources",
+  "Evidence scoring — relevance, source credibility, temporal freshness per claim",
+  "AI analysis #1 — judge each claim SUPPORT / CONTRADICT / INSUFFICIENT from evidence only",
+  "Adversarial AI review #2 — independent AI critic hunts for errors in AI #1",
+  "Final decision engine — evidence-led verdict per claim (strong evidence > AI > ML, tie-break only)",
+  "Overall verdict — combine claim verdicts, then AI final validation explains WHY it is real, fake, or unverified",
+];
 
 export function ResultPanel({
   result,
@@ -87,7 +59,6 @@ export function ResultPanel({
   const [showKeywordInfo, setShowKeywordInfo] = useState(false);
 
   const stats = result.article_stats;
-  const probs = result.probabilities;
   const keywords = result.keywords.slice(0, 10);
   const feats = result.explanation?.features ?? [];
 
@@ -193,64 +164,30 @@ export function ResultPanel({
       {/* ---- Evidence-based verification ---- */}
       {result.verification && <VerificationSection verification={result.verification} />}
 
-      {/* ---- Secondary NN signal ---- */}
-      {result.prediction && (
+      {/* ---- How it works (one flow map) ---- */}
       <Card className="overflow-hidden">
         <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
           <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-            Secondary Signal — Trained Neural Network
+            How TruthLens Works
           </h3>
           <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-            Stylistic pattern from the local BiGRU network only. The verdict above is the primary judgment.
+            One end-to-end pipeline — every step is executed and logged on the backend.
           </p>
         </div>
-        <div className="grid gap-6 p-6 md:grid-cols-2">
-          <div className="flex flex-col items-center justify-center gap-3">
-            <div className="flex flex-col items-center gap-2">
-              <PredictionBadge label={result.prediction} size="lg" />
-              <p className="text-xs text-slate-500 dark:text-slate-400">{result.confidence_level}</p>
-            </div>
-            <ConfidenceGauge confidence={result.confidence} prediction={result.prediction} />
-            <p className="text-center text-[11px] text-slate-400 dark:text-slate-500">
-              Model: {result.model} · {result.model_info?.vectorizer ?? "word embedding + BiGRU"}
-            </p>
-          </div>
-
-          <div className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              Probability Distribution
-            </p>
-            <ProbCard label="REAL" value={probs.real} icon={CheckCircle2} tone="text-emerald-600 dark:text-emerald-400" />
-            <ProbCard label="FAKE" value={probs.fake} icon={XCircle} tone="text-rose-600 dark:text-rose-400" />
-
-            {result.prediction === "UNCERTAIN" && (
-              <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">
-                <HelpCircle size={13} className="mt-0.5 shrink-0" />
-                <span>
-                  <strong>UNCERTAIN (abstain):</strong> the model's top-class
-                  probability ({(result.confidence * 100).toFixed(1)}%) was below
-                  the {Math.round((result.uncertain_threshold ?? 0.78) * 100)}%
-                  tolerances, so TruthLens declined to call REAL or FAKE. This is
-                  a decision, not a third probability.
-                </span>
-              </div>
-            )}
-
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-500 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400">
-              Raw model probabilities (binary classifier): REAL{" "}
-              {formatPercent(result.model_raw?.p_real ?? probs.real)}, FAKE{" "}
-              {formatPercent(result.model_raw?.p_fake ?? probs.fake)} — together
-              100%. UNCERTAIN is an abstain decision when the model is unsure; it
-              is never manufactured by subtracting from these probabilities.
-            </div>
-          </div>
-        </div>
-
-        <div className="border-t border-slate-200 px-6 py-4 dark:border-slate-800">
-          <Disclaimer text={result.disclaimer} />
-        </div>
+        <ol className="grid gap-2 p-5 sm:grid-cols-2">
+          {FLOW_STEPS.map((step, idx) => (
+            <li
+              key={step}
+              className="flex items-start gap-2 rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2 text-xs leading-relaxed text-slate-600 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-300"
+            >
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[10px] font-bold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                {idx + 1}
+              </span>
+              {step}
+            </li>
+          ))}
+        </ol>
       </Card>
-      )}
 
       {/* ---- Actions ---- */}
       {!compact && (
