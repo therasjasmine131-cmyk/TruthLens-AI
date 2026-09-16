@@ -96,6 +96,36 @@ _USER_REVIEW = (
     "- List real problems only; do not invent issues to disagree."
 )
 
+_SYSTEM_VALIDATE = (
+    "You are the FINAL VALIDATOR of a multi-stage fact-check pipeline. A "
+    "pipeline (neural-network signal + evidence retrieval + AI analysis #1 + "
+    "adversarial AI review #2) has already produced a PROVISIONAL verdict for "
+    "the submitted news text. Do not blindly trust it - independently judge the "
+    "text yourself and give YOUR OWN final verdict: REAL (true news), FAKE "
+    "(false/misleading), or UNVERIFIED (cannot be confirmed).\n"
+    "Critically, you MUST explain WHY: if REAL, name the specific facts or "
+    "reporting that make it credible; if FAKE, point out exactly what is wrong "
+    "or misleading and why; if UNVERIFIED, say what is missing. Base this on "
+    "your knowledge of the world and on the evidence summary below. Never "
+    "invent specific sources or URLs that were not provided."
+)
+
+_USER_VALIDATE = (
+    "Article (language: {language}):\n{article}\n\n"
+    "Pipeline result (provisional):\n{overall}\n\n"
+    "Adds up to a verdict of \"{verdict}\" at {confidence}% confidence.\n\n"
+    "Claim-by-claim summary:\n{claims}\n\n"
+    'Respond with STRICT JSON only, no markdown:\n'
+    '{{"label": "REAL or FAKE or UNVERIFIED", "confidence": 0.0, '
+    '"agrees": true or false, "reasoning": "explain WHY it is REAL, WHY it '
+    'is FAKE, or why it cannot be verified - a few clear sentences"}}\n'
+    "- label: your independent final validation of the whole article.\n"
+    "- confidence: 0.0 to 1.0 how sure you are about your label.\n"
+    "- agrees: whether you agree with the pipeline's provisional verdict.\n"
+    "- reasoning: the 'why' - concrete reasons a reader will understand.\n"
+    "- Never mention pipeline stage names; speak as a fact-checker to a reader."
+)
+
 _DECISION_RE = re.compile(r'"decision"\s*:\s*"(SUPPORT[^",]*|CONTRADICT[^",]*|INSUFFICIENT[^",]*|UNVERIFIED)"', re.I)
 _VERDICT_RE = re.compile(r'"verdict"\s*:\s*"(SUPPORT[^",]*|CONTRADICT[^",]*|INSUFFICIENT[^",]*|UNVERIFIED)"', re.I)
 _CONF_RE = re.compile(r'"confidence"\s*:\s*(0?\.\d+|\d\.\d+|1|0)\b')
@@ -107,6 +137,14 @@ _CANONICAL = {
     "SUPPORT": "SUPPORT", "SUPPORTS": "SUPPORT",
     "CONTRADICT": "CONTRADICT", "CONTRADICTS": "CONTRADICT",
     "INSUFFICIENT": "INSUFFICIENT", "UNVERIFIED": "INSUFFICIENT",
+}
+
+_FINAL_LABELS = {
+    "REAL": "REAL", "TRUE": "REAL", "SUPPORT": "REAL", "SUPPORTS": "REAL",
+    "FAKE": "FALSE", "FALSE": "FALSE", "CONTRADICT": "FALSE",
+    "CONTRADICTS": "FALSE",
+    "UNVERIFIED": "UNVERIFIED", "INSUFFICIENT": "UNVERIFIED",
+    "CANNOT VERIFY": "UNVERIFIED", "UNCERTAIN": "UNVERIFIED",
 }
 
 
@@ -409,4 +447,82 @@ def _run_review(claim: str, ctx: str, ai1: dict, language: str) -> dict | None:
         "agrees_with_first": agrees,
         "problems": problems,
         "reasoning": str(obj.get("reasoning", ""))[:400],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Final validation (Gemini) - the last stage
+# ---------------------------------------------------------------------------
+
+def _normalize_final_label(value: object) -> str | None:
+    """Map a label string to the verdict convention REAL / FALSE / UNVERIFIED."""
+    return _FINAL_LABELS.get(str(value or "").strip().upper())
+
+
+def final_validation(article: str, overall: dict, claims: list[dict],
+                     language: str = "english") -> dict | None:
+    """Gemini independently validates the pipeline's final result and says WHY.
+
+    This is the LAST stage of the pipeline: after the AI test result (NN +
+    evidence + AI analysis #1 + adversarial review #2) is produced, Gemini
+    reviews the whole article, gives its own Real/Fake/Unverified label and a
+    plain-language explanation of WHY. Returns ``None`` when Gemini is not
+    configured or unreachable (the pipeline result is then unchanged).
+    """
+    provisional = (overall or {}).get("verdict") or "UNVERIFIED"
+    confidence = (overall or {}).get("confidence") or 0.0
+    explanation = (overall or {}).get("explanation") or ""
+    rows = []
+    for claim in (claims or [])[:6]:
+        rows.append(
+            f"- \"{str(claim.get('text'))[:200]}\" -> {claim.get('verdict')}"
+            f" (authority: {claim.get('final_authority', claim.get('authority', 'n/a'))}, "
+            f"confidence {claim.get('confidence', 0):.2f})"
+        )
+    overall_txt = (
+        f"verdict={provisional}, confidence={confidence:.2f}, "
+        f"explanation={str(explanation)[:600]}"
+    )
+    key = _cache_key("final_validate", article[:2000], overall_txt)
+    if key in _CACHE:
+        return _CACHE[key]
+    result = _run_final_validation(article, overall_txt, provisional,
+                                   confidence, rows, language)
+    _CACHE[key] = result
+    return result
+
+
+def _run_final_validation(article: str, overall_txt: str, provisional: str,
+                          confidence: float, rows: list[str],
+                          language: str) -> dict | None:
+    user = _USER_VALIDATE.format(
+        language=language or "english",
+        article=article[:3500] or "(no text)",
+        overall=overall_txt,
+        verdict=provisional,
+        confidence=confidence,
+        claims="\n".join(rows) if rows else "(no claims extracted)",
+    )
+    obj = _call_gemini(_SYSTEM_VALIDATE, user, temperature=0.1)
+    if not obj:
+        return None
+    label = _normalize_final_label(obj.get("label") or obj.get("verdict")
+                                   or obj.get("decision"))
+    if not label:
+        return None
+    try:
+        conf = max(0.0, min(1.0, float(obj.get("confidence", 0.5))))
+    except (TypeError, ValueError):
+        conf = 0.5
+    agrees = bool(obj.get("agrees", obj.get("agrees_with_first", False)))
+    if "agrees" not in obj and "agrees_with_first" not in obj:
+        agrees = (label == _normalize_final_label(provisional))
+    return {
+        "available": True,
+        "source": "gemini",
+        "model": GEMINI_MODEL,
+        "label": label,
+        "confidence": round(conf, 3),
+        "agrees": agrees,
+        "reasoning": str(obj.get("reasoning", ""))[:600],
     }

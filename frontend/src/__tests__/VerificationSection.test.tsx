@@ -143,6 +143,50 @@ describe("VerificationSection", () => {
     expect(screen.getByText("SUPPORTS")).toBeInTheDocument();
   });
 
+  it("shows the Gemini final validation card with the WHY reasoning", () => {
+    // default report has no gemini validation -> card is hidden
+    renderVerification();
+    expect(screen.queryByText("Gemini Final Validation")).not.toBeInTheDocument();
+
+    const withGemini: Verification = {
+      ...SAMPLE_VERIFICATION,
+      gemini_validation: {
+        available: true,
+        source: "gemini",
+        model: "gemini-3.5-flash-lite",
+        label: "FALSE",
+        confidence: 0.89,
+        agrees: true,
+        reasoning: "Every claim here repeats a debunked rumor; the real policy gives 5000 rupees.",
+      },
+    };
+    render(<VerificationSection verification={withGemini} />);
+    expect(screen.getByText("Gemini Final Validation")).toBeInTheDocument();
+    expect(screen.getByText(/Validates FAKE/)).toBeInTheDocument();
+    expect(screen.getByText(/Agrees with the evidence verdict/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/repeats a debunked rumor; the real policy gives 5000 rupees/),
+    ).toBeInTheDocument();
+  });
+
+  it("marks a Gemini disagreement instead of blind agreement", () => {
+    const disagreeing: Verification = {
+      ...SAMPLE_VERIFICATION,
+      gemini_validation: {
+        available: true,
+        source: "gemini",
+        model: "gemini-3.5-flash-lite",
+        label: "UNVERIFIED",
+        confidence: 0.3,
+        agrees: false,
+        reasoning: "No independent source could be checked for this claim.",
+      },
+    };
+    render(<VerificationSection verification={disagreeing} />);
+    expect(screen.getByText(/Disagrees — reviewed independently/)).toBeInTheDocument();
+    expect(screen.getByText(/Validates UNVERIFIED/)).toBeInTheDocument();
+  });
+
   it("renders only UNVERIFIED styling for a fully-unverified report", () => {
     const unverified: Verification = {
       ...SAMPLE_VERIFICATION,

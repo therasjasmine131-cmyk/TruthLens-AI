@@ -120,6 +120,16 @@ export function ResultPanel({
               <p className={`mt-1 max-w-xl text-xs leading-relaxed ${VERDICT_STYLES[finalVerdict].muted}`}>
                 {VERDICT_STYLES[finalVerdict].blurb}
               </p>
+              {result.verification?.gemini_validation?.label && (
+                <p className={`mt-2 flex items-start gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] leading-relaxed ${VERDICT_STYLES[finalVerdict].pill}`}>
+                  <span className="mt-px shrink-0">✓</span>
+                  <span>
+                    <strong>Validated by Gemini:</strong>{" "}
+                    {result.verification.gemini_validation.reasoning ||
+                      "Gemini reviewed this verdict and explained its reasoning."}
+                  </span>
+                </p>
+              )}
             </div>
             <div className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium ${VERDICT_STYLES[finalVerdict].pill}`}>
               {VERDICT_STYLES[finalVerdict].icon}

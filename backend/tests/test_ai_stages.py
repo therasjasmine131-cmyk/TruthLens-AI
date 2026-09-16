@@ -222,6 +222,70 @@ def test_build_evidence_context_includes_relations():
     assert "a.org" in ctx
 
 
+# --- final validation (Gemini) ---------------------------------------------
+
+def _overall(verdict="REAL", confidence=0.9):
+    return {"verdict": verdict, "confidence": confidence,
+            "explanation": "Evidence supports it."}
+
+
+def test_final_validation_builds_record(monkeypatch):
+    monkeypatch.setattr(ai_stage, "_call_gemini", lambda s, u, temperature=0.1: {
+        "label": "REAL", "confidence": 0.93, "agrees": True,
+        "reasoning": "Independent reporting and official records confirm the claim.",
+    })
+    result = ai_stage.final_validation(
+        "The Earth revolves around the Sun.", _overall("REAL"),
+        [{"text": "The Earth revolves around the Sun.", "verdict": "REAL",
+          "confidence": 0.9, "final_authority": "evidence"}], "english",
+    )
+    assert result is not None
+    assert result["available"] is True
+    assert result["source"] == "gemini"
+    assert result["label"] == "REAL"
+    assert result["confidence"] == pytest.approx(0.93, abs=0.001)
+    assert result["agrees"] is True
+    assert "official records" in result["reasoning"]
+
+
+def test_final_validation_normalizes_labels(monkeypatch):
+    calls = {"n": 0}
+
+    def _fake(system, user, temperature=0.1):
+        calls["n"] += 1
+        return {"label": "FAKE", "confidence": 0.8, "agrees": True, "reasoning": "wrong"}
+
+    monkeypatch.setattr(ai_stage, "_call_gemini", _fake)
+    result = ai_stage.final_validation("Vaccines cause autism.", _overall("FALSE"), [], "english")
+    assert result["label"] == "FALSE"
+    monkeypatch.setattr(ai_stage, "_call_gemini",
+                        lambda s, u, temperature=0.1: {"label": "TRUE", "confidence": 0.7,
+                                                       "agrees": False, "reasoning": "ok"})
+    result = ai_stage.final_validation("A", _overall("UNVERIFIED"), [], "english")
+    assert result["label"] == "REAL"
+    assert result["agrees"] is False
+
+
+def test_final_validation_infers_agreement_when_missing(monkeypatch):
+    monkeypatch.setattr(ai_stage, "_call_gemini", lambda s, u, temperature=0.1: {
+        "label": "UNVERIFIED", "confidence": 0.4, "reasoning": "no evidence",
+    })
+    result = ai_stage.final_validation("Something obscure.", _overall("UNVERIFIED"), [], "english")
+    assert result["agrees"] is True
+
+
+def test_final_validation_unavailable_is_none(monkeypatch):
+    monkeypatch.setattr(ai_stage, "_call_gemini", lambda s, u, temperature=0.1: None)
+    assert ai_stage.final_validation("Any text.", _overall(), []) is None
+
+
+def test_final_validation_invalid_label_is_none(monkeypatch):
+    monkeypatch.setattr(ai_stage, "_call_gemini", lambda s, u, temperature=0.1: {
+        "label": "MAYBE", "confidence": 0.5, "reasoning": "x",
+    })
+    assert ai_stage.final_validation("Any text.", _overall(), []) is None
+
+
 # --- verifier integration (AI mocked) ---------------------------------------
 
 def test_verify_text_records_ai_stages(monkeypatch):
@@ -269,3 +333,39 @@ def test_verify_text_degrades_without_ai(monkeypatch):
     assert report["pipeline"]["ai_used"] is False
     assert report["overall"]["verdict"] == "REAL"
     assert all(c["ai_analysis_1"] is None for c in report["claims"])
+
+
+def test_verify_text_adds_gemini_final_validation(monkeypatch):
+    """With GEMINI_API_KEY set, the last pipeline stage is Gemini validation."""
+    import app.services.verification.verifier as ver
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(ver.ai_stage, "available", lambda: True)
+    monkeypatch.setattr(ver.ai_stage, "analyze_claim_ai",
+                        lambda claim, evidence, lang: _ai1("SUPPORT", 0.9))
+    monkeypatch.setattr(ver.ai_stage, "review_claim_ai",
+                        lambda claim, evidence, ai1, lang: _ai2("SUPPORT", 0.85))
+    monkeypatch.setattr(ver.ai_stage, "final_validation",
+                        lambda article, overall, claims, language="english": {
+                            "available": True, "source": "gemini", "model": "m",
+                            "label": "REAL", "confidence": 0.95, "agrees": True,
+                            "reasoning": "Independent reporting confirms the claim.",
+                        })
+
+    report = ver.verify_text("The Earth revolves around the Sun.", include_debug=True)
+    assert report["gemini_validation"] is not None
+    assert report["gemini_validation"]["label"] == "REAL"
+    assert report["pipeline"]["gemini_final_validated"] is True
+    assert "GEMINI FINAL VALIDATION" in report["stages"]["PIPELINE"]
+
+
+def test_verify_text_skips_gemini_validation_without_key(monkeypatch):
+    import app.services.verification.verifier as ver
+
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    monkeypatch.setattr(ver.ai_stage, "available", lambda: True)
+    monkeypatch.setattr(ver.ai_stage, "final_validation",
+                        lambda *a, **k: {"label": "REAL"})
+    report = ver.verify_text("The Earth revolves around the Sun.")
+    assert report["gemini_validation"] is None
+    assert report["pipeline"]["gemini_final_validated"] is False

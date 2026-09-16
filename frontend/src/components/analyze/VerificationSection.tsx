@@ -14,6 +14,7 @@ import {
   AlertTriangle,
   Eye,
   EyeOff,
+  Sparkles,
 } from "lucide-react";
 import type { AiStageDecision, ClaimStages, Verdict, Verification, VerificationClaim, VerificationEvidence } from "../../types";
 import { Card } from "../ui/Card";
@@ -449,6 +450,48 @@ export function VerificationSection({ verification }: { verification: Verificati
           </div>
         )}
       </Card>
+
+      {/* Gemini final validation */}
+      {verification.gemini_validation && verification.gemini_validation.label && (
+        <Card className="overflow-hidden border-indigo-200 dark:border-indigo-900/60">
+          <div className="flex items-center gap-2 border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+            <Sparkles size={16} className="text-indigo-500" />
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                Gemini Final Validation
+              </h3>
+              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                After the pipeline result, Gemini independently reviewed the article and explains why.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-start">
+            <div className="flex flex-col items-start gap-2 sm:min-w-[210px]">
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 dark:border-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300">
+                <Bot size={14} />
+                Validates {verification.gemini_validation.label === "REAL" ? "REAL" : verification.gemini_validation.label === "FALSE" ? "FAKE" : "UNVERIFIED"}
+              </span>
+              <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                Gemini confidence {Math.round(verification.gemini_validation.confidence * 100)}%
+              </p>
+              {verification.gemini_validation.agrees ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                  <CheckCircle2 size={11} />
+                  Agrees with the evidence verdict
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
+                  <AlertTriangle size={11} />
+                  Disagrees — reviewed independently
+                </span>
+              )}
+            </div>
+            <p className="flex-1 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+              {verification.gemini_validation.reasoning || "No reasoning returned."}
+            </p>
+          </div>
+        </Card>
+      )}
 
       {/* Claims */}
       {claims.length > 0 && (

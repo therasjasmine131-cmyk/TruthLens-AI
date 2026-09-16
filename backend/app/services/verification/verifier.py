@@ -265,6 +265,15 @@ def verify_text(text: str | None, headline: str | None = None,
 
     overall = combine_overall(claim_results)
 
+    gemini_validation = None
+    if os.environ.get("GEMINI_API_KEY", "").strip():
+        try:
+            gemini_validation = ai_stage.final_validation(
+                full_text, overall, claim_results, lang.get("code", "english"),
+            )
+        except Exception:  # noqa: BLE001 - final validation must never crash
+            logger.exception("Gemini final validation degraded")
+
     evidence_matrix = []
     for cr in claim_results:
         for e in cr["evidence"]:
@@ -303,13 +312,14 @@ def verify_text(text: str | None, headline: str | None = None,
         "ai_used": ai_count > 0,
         "ai_claims_analyzed": ai_count,
         "ai_reviews_completed": review_count,
+        "gemini_final_validated": bool(gemini_validation),
     }
 
     stages = {
         "PIPELINE": [
             "USER INPUT", "PREPROCESSING", "NN CLASSIFIER",
             "CLAIM EXTRACTION", "EVIDENCE RETRIEVAL", "AI ANALYSIS #1",
-            "AI REVIEW #2", "FINAL DECISION",
+            "AI REVIEW #2", "FINAL DECISION", "GEMINI FINAL VALIDATION",
         ],
         "claims_analyzed": len(claim_results),
         "ai_available": ai_stage.available() if ai_count else False,
@@ -336,6 +346,7 @@ def verify_text(text: str | None, headline: str | None = None,
         "pipeline": pipeline,
         "claims": claim_results,
         "overall": overall,
+        "gemini_validation": gemini_validation,
         "evidence_matrix": evidence_matrix,
         "stages": stages if include_debug else None,
         "notes": {
@@ -360,6 +371,14 @@ def verify_text(text: str | None, headline: str | None = None,
             ) if ai_count else (
                 "No AI analysis ran: GEMINI_API_KEY is not configured. Set it to "
                 "enable AI analysis #1 and the AI critic (#2)."
+            ),
+            "gemini_validation_note": (
+                "As the final step, Gemini independently validated the pipeline "
+                "result and explains WHY it judged the article real, fake, or "
+                "unverified."
+            ) if gemini_validation else (
+                "Final Gemini validation did not run (GEMINI_API_KEY not set or "
+                "unreachable) - the evidence-led result stands without it."
             ),
         },
     }

@@ -16,7 +16,8 @@ VALID_VERDICTS = {"TRUE", "FALSE", "UNVERIFIED"}
 
 
 def _verification(verdict="UNVERIFIED", *, evidence=(), sources=(),
-                  language=("english", "English")) -> dict:
+                  language=("english", "English"),
+                  gemini_validation=None) -> dict:
     code, label = language
     return {
         "status": "completed",
@@ -28,6 +29,7 @@ def _verification(verdict="UNVERIFIED", *, evidence=(), sources=(),
         ] if verdict != "UNVERIFIED" else [],
         "overall": {"verdict": verdict, "confidence": 0.7,
                     "explanation": "reasoning from test", "mixed": False},
+        "gemini_validation": gemini_validation,
         "evidence_matrix": [
             {**e, "claim": "A test claim"} for e in evidence
         ],
@@ -38,12 +40,13 @@ def _verification(verdict="UNVERIFIED", *, evidence=(), sources=(),
 @pytest.fixture()
 def verify_client(client):
     def _make(live=None, verdict="UNVERIFIED", evidence=(), sources=(),
-              language=("english", "English")):
+              language=("english", "English"), gemini_validation=None):
         import app.routes.verify as verify_mod
 
         verify_mod.live_news_check = lambda *a, **k: live
         verify_mod.run_verification = lambda *a, **k: _verification(
-            verdict, evidence=evidence, sources=sources, language=language)
+            verdict, evidence=evidence, sources=sources, language=language,
+            gemini_validation=gemini_validation)
         return client
 
     return _make
@@ -87,6 +90,43 @@ def test_no_live_and_no_evidence_stays_unverified(verify_client):
     assert body["final_verdict"] == "UNVERIFIED"
     assert body["evidence_matrix"] == []
     assert body["sources_used"] == []
+
+
+def test_gemini_final_validation_resolves_when_no_live(verify_client):
+    """At the LAST step Gemini validates the result and explains WHY."""
+    client = verify_client(
+        live=None,
+        verdict="UNVERIFIED",
+        gemini_validation={
+            "available": True, "source": "gemini", "model": "m",
+            "label": "REAL", "confidence": 0.91, "agrees": True,
+            "reasoning": "Trusted outlets and officials confirm the report.",
+        },
+    )
+    resp = _post(client, headline="Elections were announced on Friday.",
+                 article="Election commission confirms the announcement.")
+    body = resp.get_json()
+    assert body["final_verdict"] == "TRUE"
+    assert body["confidence"] == 0.91
+    assert body["reasoning"] == "Trusted outlets and officials confirm the report."
+    assert body["gemini_validation"]["label"] == "REAL"
+    assert body["gemini_validation"]["reasoning"]
+
+
+def test_gemini_final_validation_does_not_override_live(verify_client):
+    client = verify_client(
+        live={"label": "FAKE", "confidence": 0.95, "reasoning": "contradicts facts"},
+        verdict="REAL",
+        gemini_validation={
+            "available": True, "source": "gemini", "model": "m",
+            "label": "REAL", "confidence": 0.8, "agrees": True,
+            "reasoning": "looks credible",
+        },
+    )
+    resp = _post(client, headline="Vaccines cause autism.")
+    body = resp.get_json()
+    assert body["final_verdict"] == "FALSE"
+    assert body["confidence"] == 0.95
 
 
 def test_no_invented_sources_never_fabricated(verify_client):
@@ -153,6 +193,7 @@ def test_full_pipeline_offline_no_key():
             assert resp.status_code == 200
             body = resp.get_json()
             assert body["final_verdict"] in VALID_VERDICTS
+            assert body["gemini_validation"] is None
             assert isinstance(body["claims_analyzed"], int)
             assert isinstance(body["evidence_items"], int)
     finally:

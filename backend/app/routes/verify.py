@@ -63,10 +63,13 @@ def verify():
                                    include_debug=include_debug)
 
     live = live_news_check(headline, article)
+    gemini_validation = (verification or {}).get("gemini_validation")
 
     verdict = UNVERIFIED_LABEL
     if live and live.get("label"):
         verdict = live["label"]
+    elif gemini_validation and gemini_validation.get("label"):
+        verdict = gemini_validation["label"]
     elif verification and verification.get("overall"):
         verdict = verification["overall"].get("verdict") or UNVERIFIED_LABEL
 
@@ -77,6 +80,11 @@ def verify():
             "confidence": (
                 (live.get("confidence") if live and live.get("label") else None)
                 or (
+                    gemini_validation.get("confidence")
+                    if gemini_validation and gemini_validation.get("label")
+                    else None
+                )
+                or (
                     verification.get("overall", {}).get("confidence")
                     if verification and verification.get("overall")
                     else None
@@ -85,6 +93,11 @@ def verify():
             ),
             "reasoning": (
                 (live.get("reasoning") if live and live.get("label") else None)
+                or (
+                    gemini_validation.get("reasoning")
+                    if gemini_validation and gemini_validation.get("label")
+                    else None
+                )
                 or (
                     verification.get("overall", {}).get("explanation")
                     if verification and verification.get("overall")
@@ -103,6 +116,7 @@ def verify():
             "evidence_matrix": (verification or {}).get("evidence_matrix", []),
             "claims": (verification or {}).get("claims", []),
             "live_check": live,
+            "gemini_validation": gemini_validation,
             "verification": verification,
             "stages": (verification or {}).get("stages") if include_debug else None,
             "notes": {

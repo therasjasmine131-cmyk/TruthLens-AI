@@ -67,6 +67,16 @@ export interface LiveCheck {
   reasoning: string;
 }
 
+export interface GeminiValidation {
+  available: boolean;
+  source: string;
+  model?: string;
+  label: Verdict;
+  confidence: number;
+  agrees: boolean;
+  reasoning: string;
+}
+
 export interface AiVerdict {
   verdict: "REAL" | "FAKE" | "UNVERIFIED";
   confidence: number;
@@ -178,6 +188,7 @@ export interface Verification {
   language: { code: string; label: string };
   claims: VerificationClaim[];
   overall: VerificationOverall;
+  gemini_validation?: GeminiValidation | null;
   evidence_matrix: VerificationEvidence[];
   pipeline: {
     language_detected: string;
@@ -270,6 +281,7 @@ export interface VerifyResponse {
   evidence_matrix: VerificationEvidence[];
   claims: VerificationClaim[];
   live_check: LiveCheck | null;
+  gemini_validation?: GeminiValidation | null;
   verification: Verification | null;
   stages?: UnknownRecord | null;
   notes?: { verdict_basis?: string };
