@@ -90,7 +90,14 @@ def create_app(config_class=Config) -> Flask:
         static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "static")
         target = os.path.join(static_dir, path)
         if path and os.path.isfile(target):
-            return send_from_directory(static_dir, path)
-        return send_from_directory(static_dir, "index.html")
+            resp = send_from_directory(static_dir, path)
+            # hashed build assets are immutable -> cache hard on the CDN/browser
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            return resp
+        resp = send_from_directory(static_dir, "index.html")
+        # SPA shell must always be re-fetched, never heuristically cached
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        resp.headers["Pragma"] = "no-cache"
+        return resp
 
     return app
