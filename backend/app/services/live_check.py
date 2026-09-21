@@ -13,11 +13,15 @@ the rest of the analysis pipeline is unaffected.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
 import urllib.error
 import urllib.request
+from datetime import date
+
+logger = logging.getLogger("truthlens.live_check")
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
@@ -27,13 +31,25 @@ MAX_RETRIES = 2
 
 _SYSTEM_PROMPT = (
     "You are a careful news verification assistant. You check whether a news "
-    "claim is true, false, or cannot be verified, using your knowledge of "
-    "real-world reporting. Be accurate and honest: if an event is too recent, "
-    "too local, or too niche for you to know, answer UNVERIFIED instead of "
-    "guessing. Do not treat an opinion column as false merely because it is "
-    "opinionated. Real news can come from anywhere in the world and may "
-    "mention any language, currency, numbers, or company names - none of that "
-    "makes a claim false."
+    "claim is true or false using Google Search (you have it enabled) and your "
+    "own knowledge. Today is {today}.\n"
+    "Rules:\n"
+    "- Always search the CURRENT facts. An old article cannot reject a current "
+    "claim (e.g. a 2025 article saying a person is not Chief Minister must not "
+    "reject a 2026 claim that they are). Search for the current status.\n"
+    "- For current office holders, elections, political claims, government "
+    "schemes, weather alerts, recent company announcements and breaking news "
+    "you MUST rely on fresh, live search results, not only memory.\n"
+    "- Search official/government sources, press releases, reputable news and "
+    "fact-check organizations; also actively search for contradicting "
+    "evidence.\n"
+    "- Cite only real pages returned by search; never invent URLs.\n"
+    "- If you cannot verify because the event is new or has no coverage yet, "
+    "say FAKE is NOT the default - search official or primary sources first.\n"
+    "- Real news can come from anywhere in the world and may mention any "
+    "language, currency, numbers, or company names - none of that makes a "
+    "claim false. Do not treat an opinion column as false merely because it is "
+    "opinionated."
 )
 
 _USER_TEMPLATE = (
@@ -43,12 +59,10 @@ _USER_TEMPLATE = (
     "Respond with STRICT JSON only, no markdown, exactly:\n"
     '{{"label": "REAL or FAKE or UNVERIFIED", "confidence": 0.0, "reasoning": "one or two short sentences"}}\n'
     "Rules:\n"
-    "- label REAL: the claim matches real-world reporting or is a plausible "
-    "summary of a known event.\n"
-    "- label FAKE: the claim contradicts established facts or comes from a "
-    "known disinformation source.\n"
-    "- label UNVERIFIED: you genuinely do not know - too recent, local, or "
-    "niche to confirm.\n"
+    "- label REAL: current web evidence (or overwhelming knowledge) supports the claim.\n"
+    "- label FAKE: current web evidence contradicts established facts or it is "
+    "a known disinformation claim.\n"
+    "- label UNVERIFIED: only when you genuinely cannot decide after searching.\n"
     "- confidence: 0.0 to 1.0, how sure you are about your label.\n"
     "- reasoning: one or two short sentences explaining your decision."
 )
@@ -56,6 +70,12 @@ _USER_TEMPLATE = (
 _LABEL_RE = re.compile(r'"label"\s*:\s*"(REAL|FAKE|UNVERIFIED)"', re.IGNORECASE)
 _CONF_RE = re.compile(r'"confidence"\s*:\s*(0?\.\d+|\d\.\d+|1|0)\b')
 _REASON_RE = re.compile(r'"reasoning"\s*:\s*"((?:[^"\\]|\\.)*)"', re.DOTALL)
+
+_GROUNDING_TOOL = [{
+    "google_search_retrieval": {
+        "dynamicRetrievalConfig": {"mode": "MODE_DYNAMIC", "dynamicThreshold": 0.5},
+    },
+}]
 
 
 def live_news_check(headline: str | None, article: str | None) -> dict | None:
@@ -70,11 +90,15 @@ def live_news_check(headline: str | None, article: str | None) -> dict | None:
         return None
 
     article_part = f"ARTICLE:\n{article}\n\n" if article else ""
-    prompt = _USER_TEMPLATE.format(headline=headline[:2000], article_part=article_part)
+    prompt = _USER_TEMPLATE.format(
+        headline=headline[:2000], article_part=article_part,
+    )
+    system = _SYSTEM_PROMPT.format(today=date.today().isoformat())
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "systemInstruction": {"parts": [{"text": _SYSTEM_PROMPT}]},
+        "systemInstruction": {"parts": [{"text": system}]},
         "generationConfig": {"responseMimeType": "application/json", "temperature": 0.1},
+        "tools": _GROUNDING_TOOL,
     }
     body = json.dumps(payload).encode("utf-8")
     model = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
@@ -84,34 +108,76 @@ def live_news_check(headline: str | None, article: str | None) -> dict | None:
     for attempt in range(MAX_RETRIES + 1):
         transient = False
         for auth in headers:
-            try:
-                req = urllib.request.Request(
-                    url,
-                    data=body,
-                    headers={**auth, "Content-Type": "application/json"},
-                    method="POST",
-                )
-                with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:  # noqa: S310 (https only)
-                    data = json.loads(resp.read().decode("utf-8"))
-                reply = _text_from_response(data)
-                if not reply:
-                    continue
-                parsed = _parse_verdict(reply)
-                if parsed is not None:
+            for grounded in (True, False):
+                try:
+                    if not grounded:
+                        payload.pop("tools", None)
+                        body = json.dumps(payload).encode("utf-8")
+                    req = urllib.request.Request(
+                        url,
+                        data=body,
+                        headers={**auth, "Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:  # noqa: S310 (https only)
+                        data = json.loads(resp.read().decode("utf-8"))
+                    reply = _text_from_response(data)
+                    if not reply:
+                        continue
+                    parsed = _parse_verdict(reply)
+                    if parsed is None:
+                        continue
+                    chunks, queries = _grounding_from_response(data)
+                    parsed["source_types_checked"] = sorted(
+                        {_source_type_for_url(c["url"]) for c in chunks})
+                    parsed["sources"] = chunks
+                    parsed["web_search_queries"] = queries
+                    logger.info(
+                        "[GEMINI] live-check label=%s confidence=%s grounded_sources=%d queries=%d",
+                        parsed.get("label"), parsed.get("confidence"),
+                        len(chunks), len(queries),
+                    )
                     return parsed
-            except urllib.error.HTTPError as exc:
-                if exc.code in (400, 401, 403):
-                    continue
-                if exc.code in (429, 500, 503):
-                    transient = True
-                    break
-                return None
-            except Exception:  # noqa: BLE001 - network/timeout/parse: degrade
-                return None
+                except urllib.error.HTTPError as exc:
+                    if exc.code in (400, 401, 403):
+                        continue
+                    if exc.code in (429, 500, 503):
+                        transient = True
+                        break
+                    return None
+                except Exception:  # noqa: BLE001 - network/timeout/parse: degrade
+                    return None
+            if transient:
+                break
         if not transient:
             return None
         time.sleep(0.5 * (2 ** attempt))
     return None
+
+
+def _grounding_from_response(data: dict) -> tuple[list[dict], list[str]]:
+    chunks: list[dict] = []
+    queries: list[str] = []
+    try:
+        meta = data["candidates"][0].get("groundingMetadata") or {}
+        for chunk in meta.get("groundingChunks") or []:
+            web = chunk.get("web") or {}
+            uri = str(web.get("uri") or "").strip()
+            if uri:
+                chunks.append({"title": str(web.get("title") or "")[:200], "url": uri})
+        queries = [str(q) for q in (meta.get("webSearchQueries") or [])][:8]
+    except (KeyError, IndexError, TypeError):
+        pass
+    return chunks, queries
+
+
+def _source_type_for_url(url: str) -> str:
+    if re.search(r"\.gov", url, re.I):
+        return "official"
+    if re.search(r"\.(in|com|org|edu|net)/", url, re.I) and re.search(
+        r"factcheck|fact-check|snopes|altnews|boomlive|pib", url, re.I):
+        return "fact-check"
+    return "news"
 
 
 def _parse_verdict(reply: str) -> dict | None:

@@ -1,9 +1,10 @@
 """Tests for POST /api/verify.
 
-Covers the landscape mapping (REAL->TRUE / FALSE->FALSE / UNVERIFIED->UNVERIFIED),
-input validation, language modes, and the *no invented sources* guarantee: when
-nothing credible supports or contradicts a claim the endpoint must answer
-UNVERIFIED and must not fabricate evidence.
+Covers the landscape mapping (REAL->TRUE / FALSE->FALSE), input validation,
+language modes, the guarantee that ONLY Gemini decides (FINAL engine first,
+live check second), and the *no invented sources* / *no forced FAKE* rules:
+when neither Gemini stage produces a REAL/FAKE verdict the endpoint must
+return a verification error rather than guess.
 """
 
 from __future__ import annotations
@@ -38,15 +39,15 @@ def _verification(verdict="UNVERIFIED", *, evidence=(), sources=(),
 
 
 @pytest.fixture()
-def verify_client(client):
+def verify_client(client, monkeypatch):
     def _make(live=None, verdict="UNVERIFIED", evidence=(), sources=(),
               language=("english", "English"), gemini_validation=None):
         import app.routes.verify as verify_mod
 
-        verify_mod.live_news_check = lambda *a, **k: live
-        verify_mod.run_verification = lambda *a, **k: _verification(
+        monkeypatch.setattr(verify_mod, "live_news_check", lambda *a, **k: live)
+        monkeypatch.setattr(verify_mod, "run_verification", lambda *a, **k: _verification(
             verdict, evidence=evidence, sources=sources, language=language,
-            gemini_validation=gemini_validation)
+            gemini_validation=gemini_validation))
         return client
 
     return _make
@@ -75,21 +76,35 @@ def test_maps_false_to_false(verify_client):
     assert resp.get_json()["final_verdict"] == "FALSE"
 
 
-def test_maps_unverified_to_unverified(verify_client):
+def test_no_gemini_verdict_is_an_api_error(verify_client):
+    """Gemini says UNVERIFIED and no final engine - this is an error, not a
+    FAKE guess and not a silent UNVERIFIED answer."""
     client = verify_client(live={"label": "UNVERIFIED", "confidence": 0.4,
                                  "reasoning": "too recent"})
     resp = _post(client, headline="A brand new invention on Mars.")
-    assert resp.status_code == 200
-    assert resp.get_json()["final_verdict"] == "UNVERIFIED"
+    assert resp.status_code == 502
+    body = resp.get_json()
+    assert body["status"] == "error"
+    assert "final_verdict" not in body or body.get("final_verdict") is None
 
 
-def test_no_live_and_no_evidence_stays_unverified(verify_client):
+def test_no_live_and_no_gemini_is_an_api_error(verify_client):
     client = verify_client(live=None, verdict="UNVERIFIED")
     resp = _post(client, headline="Something nobody can confirm yet.")
+    assert resp.status_code == 502
+    assert resp.get_json()["status"] == "error"
+
+
+def test_missing_gemini_never_silently_becomes_fake(verify_client):
+    """The guarantee: when Gemini produces no REAL/FAKE verdict the system
+    must NOT invent one or fabricate evidence."""
+    client = verify_client(live=None, verdict="UNVERIFIED")
+    resp = _post(client, headline="No known reporting about this claim.",
+                 article="This is a completely invented claim text with no basis.")
+    assert resp.status_code == 502
     body = resp.get_json()
-    assert body["final_verdict"] == "UNVERIFIED"
-    assert body["evidence_matrix"] == []
-    assert body["sources_used"] == []
+    assert body["status"] == "error"
+    assert "http" not in str(body) or body.get("evidence_matrix") is None
 
 
 def test_gemini_final_validation_resolves_when_no_live(verify_client):
@@ -144,17 +159,6 @@ def test_live_check_decides_when_engine_unavailable(verify_client):
     assert resp.get_json()["final_verdict"] == "FALSE"
 
 
-def test_no_invented_sources_never_fabricated(verify_client):
-    """The guarantee: UNVERIFIED + empty evidence when no source exists."""
-    client = verify_client(live=None, verdict="UNVERIFIED")
-    resp = _post(client, headline="No known reporting about this claim.",
-                 article="This is a completely invented claim text with no basis.")
-    body = resp.get_json()
-    assert body["final_verdict"] == "UNVERIFIED"
-    assert "http" not in str(body["evidence_matrix"])
-    assert body["sources_used"] in ([], None)
-
-
 def test_invalid_language_rejected():
     from app import create_app
     from app.config import TestConfig
@@ -176,8 +180,10 @@ def test_text_too_long_rejected(verify_client):
     assert resp.status_code == 400
 
 
-def test_english_language_mode_honoured(verify_client):
-    client = verify_client(live=None, verdict="UNVERIFIED",
+def test_english_language_mode_honoured(verify_client, monkeypatch):
+    client = verify_client(live={"label": "REAL", "confidence": 0.9,
+                                 "reasoning": "matches reporting"},
+                           verdict="UNVERIFIED",
                            language=("english", "English"))
 
     import app.routes.verify as verify_mod
@@ -187,7 +193,7 @@ def test_english_language_mode_honoured(verify_client):
         captured["mode"] = language_mode
         return _verification("UNVERIFIED")
 
-    verify_mod.verify_text = _verify_text
+    monkeypatch.setattr(verify_mod, "verify_text", _verify_text)
     resp = _post(client, headline="Hello world", language="english")
     assert resp.status_code == 200
     assert captured["mode"] == "english"
@@ -195,23 +201,23 @@ def test_english_language_mode_honoured(verify_client):
 
 
 def test_full_pipeline_offline_no_key():
-    """End-to-end offline: no Gemini, knowledge-base-only, still returns 200."""
+    """End-to-end offline: no Gemini means no REAL/FAKE verdict - an honest
+    API error, never a forced FAKE."""
     from app import create_app
     from app.config import TestConfig
     monkeypatch_os = pytest.MonkeyPatch()
     monkeypatch_os.setenv("TRUTHLENS_LIVE_EVIDENCE", "0")
     monkeypatch_os.setenv("GEMINI_API_KEY", "")
+    monkeypatch_os.setenv("BAZAARLINK_API_KEY", "")
     try:
         with create_app(TestConfig).test_client() as client:
             resp = _post(client, headline="The Earth revolves around the Sun.",
                          article="Astronomers say the planet orbits the star.")
-            assert resp.status_code == 200
+            assert resp.status_code == 502
             body = resp.get_json()
-            assert body["final_verdict"] in VALID_VERDICTS
-            assert body["gemini_validation"] is None
-            assert isinstance(body["claims_analyzed"], int)
-            assert isinstance(body["evidence_items"], int)
+            assert body["status"] == "error"
+            assert "UNVERIFIED" not in str(body.get("final_verdict", ""))
     finally:
         monkeypatch_os.undo()
-        for name in ("TRUTHLENS_LIVE_EVIDENCE",):
+        for name in ("TRUTHLENS_LIVE_EVIDENCE", "GEMINI_API_KEY", "BAZAARLINK_API_KEY"):
             os.environ.pop(name, None)

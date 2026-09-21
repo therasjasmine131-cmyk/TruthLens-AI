@@ -1,16 +1,15 @@
-"""Verify endpoint: evidence-led multi-stage fact verification.
+"""Verify endpoint for the Ghost-Buster-style evidence pipeline.
 
-Returns a ``final_verdict`` of TRUE / FALSE / UNVERIFIED, computed the same way
-as the in-page analysis but exposed as a first-class API:
-
-* Language mode: auto / english / tamil / tanglish.
-* Gemini knowledge check (when GEMINI_API_KEY is set) feeds the evidence grid.
-* The BiGRU network is only a secondary stylistic signal - the final verdict is
-  evidence-led and defaults to UNVERIFIED when no evidence backs a claim
-  (never invents sources).
+``final_verdict`` is TRUE or FALSE, decided ONLY by Gemini (the FINAL engine
+first, then the live check). The BiGRU neural network is a first-stage
+suggestion that Gemini receives but can override. If Gemini cannot produce a
+verdict this is returned as an API error - never silently converted to FAKE
+and never downgraded to UNVERIFIED.
 """
 
 from __future__ import annotations
+
+import logging
 
 from flask import Blueprint, jsonify, request
 
@@ -24,14 +23,28 @@ from ..services.verification.scoring import (
     VERDICT_UNVERIFIED as UNVERIFIED_LABEL,
 )
 
+logger = logging.getLogger("truthlens.verify")
+
 bp = Blueprint("verify", __name__, url_prefix="/api/verify")
 
 _VERDICT_MAP = {
     REAL_LABEL: "TRUE",
     FALSE_LABEL: "FALSE",
     "FAKE": "FALSE",  # live_check (Gemini) uses FAKE; evidence scoring uses FALSE
-    UNVERIFIED_LABEL: "UNVERIFIED",
 }
+
+
+def _gemini_basis(gemini_validation: dict | None, live: dict | None) -> tuple[str | None, bool]:
+    """Resolve THE Gemini verdict: FINAL engine first, live check second.
+
+    Returns ``(verdict_label, from_engine)`` or ``(None, False)`` when neither
+    Gemini stage produced a REAL/FAKE verdict.
+    """
+    if gemini_validation and gemini_validation.get("label"):
+        return gemini_validation["label"], True
+    if live and live.get("label") and live["label"] in ("REAL", "FAKE"):
+        return live["label"], False
+    return None, False
 
 MAX_TEXT_CHARS = 30000
 
@@ -65,50 +78,42 @@ def verify():
     live = live_news_check(headline, article)
     gemini_validation = (verification or {}).get("gemini_validation")
 
-    # Gemini (with live data) is the decision-maker. The FINAL engine casts the
-    # verdict (REAL/FAKE); the live check is used only if the engine is
-    # unavailable; the evidence-led overall is a last resort so the answer is
-    # almost always a firm TRUE or FALSE.
-    verdict = UNVERIFIED_LABEL
-    if gemini_validation and gemini_validation.get("label"):
-        verdict = gemini_validation["label"]
-    elif live and live.get("label"):
-        verdict = live["label"]
-    elif verification and verification.get("overall"):
-        verdict = verification["overall"].get("verdict") or UNVERIFIED_LABEL
+    verdict, from_engine = _gemini_basis(gemini_validation, live)
+    if verdict is None:
+        # Gemini (the only decision-maker) produced no REAL/FAKE verdict.
+        # Missing verification is an API error - it must not become a guess.
+        logger.error(
+            "[API] Gemini produced no verdict - engine_available=%s live_available=%s -> 502",
+            bool(gemini_validation), bool(live),
+        )
+        return jsonify({
+            "status": "error",
+            "error": "Gemini verification is temporarily unavailable and could "
+                     "not produce a REAL or FAKE verdict.",
+            "gemini_validation": gemini_validation,
+            "live_check": live,
+            "verification": verification,
+        }), 502
+
+    if from_engine:
+        basis = "final-engine"
+        confidence_value = gemini_validation.get("confidence")
+        reasoning_value = gemini_validation.get("reasoning")
+    else:
+        basis = "live-check"
+        confidence_value = live.get("confidence")
+        reasoning_value = live.get("reasoning")
+    logger.info(
+        "[API] Final verdict: %s  confidence=%.3f  basis=%s",
+        _VERDICT_MAP.get(verdict, "UNKNOWN"), confidence_value or 0.0, basis,
+    )
 
     return jsonify(
         {
             "status": "completed",
-            "final_verdict": _VERDICT_MAP.get(verdict, "UNVERIFIED"),
-            "confidence": (
-                (gemini_validation.get("confidence")
-                 if gemini_validation and gemini_validation.get("label")
-                 else None)
-                or (
-                    live.get("confidence") if live and live.get("label") else None
-                )
-                or (
-                    verification.get("overall", {}).get("confidence")
-                    if verification and verification.get("overall")
-                    else None
-                )
-                or 0.0
-            ),
-            "reasoning": (
-                (gemini_validation.get("reasoning")
-                 if gemini_validation and gemini_validation.get("label")
-                 else None)
-                or (
-                    live.get("reasoning") if live and live.get("label") else None
-                )
-                or (
-                    verification.get("overall", {}).get("explanation")
-                    if verification and verification.get("overall")
-                    else ""
-                )
-                or ""
-            ),
+            "final_verdict": _VERDICT_MAP.get(verdict, "UNKNOWN"),
+            "confidence": confidence_value or 0.0,
+            "reasoning": reasoning_value or "",
             "language_mode": language,
             "language_detected": (verification or {}).get("language", {}).get("label"),
             "claims_analyzed": len((verification or {}).get("claims", [])),

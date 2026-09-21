@@ -64,8 +64,13 @@ def _article_ml_signal(full_text: str):
         if not model_manager.ready:
             return None
         p_real, p_fake = model_manager.predict_proba(full_text)
+        verdict = "REAL" if p_real >= p_fake else "FAKE"
+        logger.info(
+            "[NN] Prediction: %s  Confidence: %.3f  (article-level, suggestion only)",
+            verdict, max(p_real, p_fake),
+        )
         return {
-            "verdict": "REAL" if p_real >= p_fake else "FAKE",
+            "verdict": verdict,
             "confidence": max(p_real, p_fake),
             "reasoning": (
                 f"Local BiGRU stylistic signal: {max(p_real, p_fake):.1%} "
@@ -361,6 +366,11 @@ def verify_text(text: str | None, headline: str | None = None,
             )
             if engine:
                 gemini_validation = _gemini_validation_app_shape(engine, overall)
+                logger.info(
+                    "[GEMINI] Final engine verdict=%s confidence=%d initial_correct=%s",
+                    engine.get("verdict"), engine.get("confidence"),
+                    engine.get("initial_model_was_correct"),
+                )
         except Exception:  # noqa: BLE001 - final validation must never crash
             logger.exception("Gemini final validation degraded")
 

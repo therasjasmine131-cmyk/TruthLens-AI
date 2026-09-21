@@ -282,7 +282,7 @@ def _engine_inputs():
 
 def test_final_engine_builds_record(monkeypatch):
     ai_stage._CACHE.clear()
-    monkeypatch.setattr(ai_stage, "_call_gemini", lambda s, u, temperature=0.1: {
+    monkeypatch.setattr(ai_stage, "_call_gemini_grounded", lambda s, u, temperature=0.1: ({
         "verdict": "REAL", "confidence": 95,
         "reasoning": "Official announcement confirms the rebate.",
         "sources_checked": [{
@@ -297,7 +297,7 @@ def test_final_engine_builds_record(monkeypatch):
             "status": "SUPPORTED",
             "evidence_strength": "HIGH",
         }],
-    })
+    }, [], []))
     result = ai_stage.final_verdict_engine(**_engine_inputs())
     assert result is not None
     assert result["available"] is True
@@ -311,23 +311,23 @@ def test_final_engine_builds_record(monkeypatch):
 
 def test_final_engine_never_returns_unverified(monkeypatch):
     ai_stage._CACHE.clear()
-    monkeypatch.setattr(ai_stage, "_call_gemini", lambda s, u, temperature=0.1: {
+    monkeypatch.setattr(ai_stage, "_call_gemini_grounded", lambda s, u, temperature=0.1: ({
         "verdict": "UNVERIFIED", "confidence": 30, "reasoning": "cannot tell",
-    })
+    }, [], []))
     assert ai_stage.final_verdict_engine(**_engine_inputs()) is None
 
 
 def test_final_engine_rejects_invalid_verdict(monkeypatch):
     ai_stage._CACHE.clear()
-    monkeypatch.setattr(ai_stage, "_call_gemini", lambda s, u, temperature=0.1: {
+    monkeypatch.setattr(ai_stage, "_call_gemini_grounded", lambda s, u, temperature=0.1: ({
         "verdict": "MAYBE", "confidence": 50, "reasoning": "x",
-    })
+    }, [], []))
     assert ai_stage.final_verdict_engine(**_engine_inputs()) is None
 
 
 def test_final_engine_sanitizes_fabricated_sources(monkeypatch):
     ai_stage._CACHE.clear()
-    monkeypatch.setattr(ai_stage, "_call_gemini", lambda s, u, temperature=0.1: {
+    monkeypatch.setattr(ai_stage, "_call_gemini_grounded", lambda s, u, temperature=0.1: ({
         "verdict": "FAKE", "confidence": 88, "reasoning": "contradicted",
         "sources_checked": [
             {"title": "Real source", "url": "https://example.gov/new-rebate",
@@ -335,7 +335,7 @@ def test_final_engine_sanitizes_fabricated_sources(monkeypatch):
             {"title": "Invented source", "url": "https://totally-made-up.example/x",
              "supports_claim": True},
         ],
-    })
+    }, [], []))
     result = ai_stage.final_verdict_engine(**_engine_inputs())
     urls = [s["url"] for s in result["sources_checked"]]
     assert urls == ["https://example.gov/new-rebate"]
@@ -344,9 +344,9 @@ def test_final_engine_sanitizes_fabricated_sources(monkeypatch):
 
 def test_final_engine_infers_correctness_when_missing(monkeypatch):
     ai_stage._CACHE.clear()
-    monkeypatch.setattr(ai_stage, "_call_gemini", lambda s, u, temperature=0.1: {
+    monkeypatch.setattr(ai_stage, "_call_gemini_grounded", lambda s, u, temperature=0.1: ({
         "verdict": "REAL", "confidence": 90, "reasoning": "matches official filing",
-    })
+    }, [], []))
     inputs = _engine_inputs()
     inputs["initial_verdict"] = "REAL"
     result = ai_stage.final_verdict_engine(**inputs)
@@ -367,7 +367,8 @@ def test_final_engine_formats_search_results_never_empty():
 
 def test_final_engine_unavailable_is_none(monkeypatch):
     ai_stage._CACHE.clear()
-    monkeypatch.setattr(ai_stage, "_call_gemini", lambda s, u, temperature=0.1: None)
+    monkeypatch.setattr(ai_stage, "_call_gemini_grounded",
+                        lambda s, u, temperature=0.1: (None, [], []))
     assert ai_stage.final_verdict_engine(**_engine_inputs()) is None
 
 

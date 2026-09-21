@@ -19,11 +19,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import time
 import urllib.error
 import urllib.request
+from datetime import date
+
+logger = logging.getLogger("truthlens.ai_stage")
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
@@ -109,39 +113,59 @@ _SYSTEM_FINAL_ENGINE = (
     "STEP 2 - Check the initial model: treat its verdict only as a "
     "hypothesis. Do not conclude FAKE just because it says FAKE, or REAL just "
     "because it says REAL. Investigate from evidence.\n\n"
-    "STEP 3 - Ground in the SEARCH RESULTS below (retrieved from Wikipedia, "
-    "Google Fact Check, NewsAPI, and the knowledge base). Only use sources that "
-    "are actually listed. Never invent titles, URLs, or quotes.\n\n"
-    "STEP 4 - Use current information: prefer recent evidence; note when a "
-    "claim relies on outdated information.\n\n"
+    "STEP 3 - Ground in real search evidence. Use Gemini's Google Search to "
+    "check the current facts live; also use the SEARCH RESULTS below (retrieved "
+    "from Wikipedia, Google Fact Check, NewsAPI, and the knowledge base). Only "
+    "use sources that are actually listed or actually returned by Google "
+    "Search. Never invent titles, URLs, dates, or quotes.\n\n"
+    "STEP 4 - Use current information: today is {today}. Always compare the "
+    "article/event/source dates against today. An OLD article is never proof "
+    "against a CURRENT claim (e.g. a 2025 article saying \"X is not CM\" must "
+    "not reject a 2026 claim that X is CM) - search for the CURRENT status.\n\n"
     "STEP 5 - Source check: weigh official/government sources and reputable "
-    "news/fact-check organizations; copied articles are NOT independent "
-    "confirmation. Count distinct independent sources.\n\n"
+    "news/fact-check organizations; copied/syndicated articles are NOT "
+    "independent confirmation - count distinct independent sources.\n\n"
     "STEP 6 - Headline check: compare the headline with the article body. A "
-    "minor wording difference is not FAKE on its own; flag exact exaggerations "
-    "or contradictions.\n\n"
-    "STEP 7 - Article check: verify the article's core facts (names, dates, "
-    "locations, quotes, numbers, organizations, official announcements).\n\n"
-    "STEP 8 - Contradiction search: weigh any evidence that contradicts the "
-    "article against the evidence that supports it.\n\n"
+    "minor wording/date/name difference is not FAKE on its own; investigate the "
+    "specific discrepancy. Only treat the article as fake when the headline "
+    "materially changes the meaning.\n\n"
+    "STEP 7 - Article check: verify the article's core facts (names, positions, "
+    "dates, locations, quotes, numbers, organizations, official announcements, "
+    "schemes, company statements, court decisions). Verify EACH important "
+    "factual claim separately - never judge the whole article from one "
+    "sentence.\n\n"
+    "STEP 8 - Contradiction search: actively look for evidence that "
+    "contradicts the article (claims confirmed/false/denied/fact-checks/official "
+    "statements), and weigh it against the supporting evidence. Do not only "
+    "search for confirmation.\n\n"
     "STEP 9 - No article does not mean FAKE: if no reporting exists yet, search "
-    "for official announcements and primary sources. A breaking event can be "
-    "REAL before news coverage appears.\n\n"
+    "official sources, government sources, primary announcements and verified "
+    "accounts. A breaking event can be REAL before news coverage appears. "
+    "Lack of evidence lowers confidence but must NOT by itself create a FAKE "
+    "verdict.\n\n"
     "STEP 10 - Decide: after reviewing the initial model prediction, the "
-    "article, the search evidence, source quality, and contradictions, give "
-    "YOUR OWN final decision. Keep the initial model's verdict only if the "
-    "evidence supports it; otherwise OVERRIDE it. The initial model must never "
-    "override your decision."
-)
+    "article, the live Google Search results, source quality, dates, and "
+    "contradictions, give YOUR OWN final decision. Keep the initial model's "
+    "verdict only if the evidence supports it; otherwise OVERRIDE it. The "
+    "initial model must never override your decision."
+).format(today=date.today().isoformat())
 
 _USER_FINAL_ENGINE = (
     "HEADLINE:\n{headline}\n\n"
     "ARTICLE:\n{article}\n\n"
     "LANGUAGE:\n{language}\n\n"
+    "CURRENT DATE:\n{today}\n\n"
     "INITIAL_MODEL_VERDICT:\n{initial_verdict}\n\n"
     "INITIAL_MODEL_CONFIDENCE:\n{initial_confidence}\n\n"
     "INITIAL_MODEL_REASONING:\n{initial_reasoning}\n\n"
-    "SEARCH RESULTS (retrieved live; use ONLY these - never invent any):\n"
+    "GOOGLE SEARCH GROUNDING:\n"
+    "You have Google Search enabled. Search the web for the CURRENT facts - "
+    "official and government sources, press releases, reputable news and "
+    "fact-check organizations - and also actively search for contradicting "
+    "evidence. Cite only real pages that Google Search returns; never invent "
+    "titles, dates, quotes or URLs.\n\n"
+    "SEARCH RESULTS (retrieved live from Wikipedia / Google Fact Check / "
+    "NewsAPI / knowledge base; use ONLY these - never invent any):\n"
     "{search_results}\n\n"
     "PIPELINE PROVISIONAL RESULT:\n{provisional}\n\n"
     'Respond with STRICT JSON only, no markdown:\n'
@@ -232,6 +256,98 @@ def build_evidence_context(evidence: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 # Gemini call (AI #1)
 # ---------------------------------------------------------------------------
+
+def _grounding_from_gemini(data: dict) -> tuple[list[dict], list[str]]:
+    """Pull real Google Search grounding chunks/queries from a response."""
+    chunks: list[dict] = []
+    queries: list[str] = []
+    try:
+        meta = data["candidates"][0].get("groundingMetadata") or {}
+        for chunk in meta.get("groundingChunks") or []:
+            web = chunk.get("web") or {}
+            uri = str(web.get("uri") or "").strip()
+            if uri:
+                chunks.append({"title": str(web.get("title") or "")[:200], "url": uri})
+        queries = [str(q) for q in (meta.get("webSearchQueries") or [])][:8]
+    except (KeyError, IndexError, TypeError) as exc:  # noqa: B841
+        logger.debug("no grounding metadata: %s", exc)
+    return chunks, queries
+
+
+_GROUNDING_TOOL = [{
+    "google_search_retrieval": {
+        "dynamicRetrievalConfig": {"mode": "MODE_DYNAMIC", "dynamicThreshold": 0.5},
+    },
+}]
+
+
+def _call_gemini_grounded(system: str, user: str,
+                          temperature: float = 0.1) -> tuple[dict | None,
+                                                            list[dict], list[str]]:
+    """Call Gemini WITH real Google Search grounding.
+
+    Returns ``(parsed_object, grounding_chunks, web_search_queries)``. If the
+    API rejects the grounding tool, retries WITHOUT it so the engine still
+    works. ``parsed_object`` is ``None`` when Gemini is unavailable.
+    """
+    key = os.environ.get("GEMINI_API_KEY", "")
+    if not key:
+        return None, [], []
+    url = f"{GEMINI_BASE_URL}/models/{GEMINI_MODEL}:generateContent"
+    headers_list = [{"x-goog-api-key": key}, {"Authorization": f"Bearer {key}"}]
+    for attempt in range(MAX_RETRIES + 1):
+        transient = False
+        for auth in headers_list:
+            for payload in _grounded_payloads(system, user, temperature):
+                try:
+                    req = urllib.request.Request(
+                        url, data=json.dumps(payload).encode("utf-8"),
+                        headers={**auth, "Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:  # noqa: S310 https only
+                        data = json.loads(resp.read().decode("utf-8"))
+                    text = _text_from_gemini(data)
+                    if not text:
+                        continue
+                    obj = _parse_json_object(text)
+                    if not obj:
+                        continue
+                    chunks, queries = _grounding_from_gemini(data)
+                    logger.info(
+                        "[GEMINI] final-engine parsed verdict=%s  grounded_chunks=%d  queries=%d",
+                        obj.get("verdict"), len(chunks), len(queries),
+                    )
+                    return obj, chunks, queries
+                except urllib.error.HTTPError as exc:
+                    if exc.code in (400, 401, 403):
+                        continue
+                    if exc.code in (429, 500, 503):
+                        transient = True
+                        break
+                    return None, [], []
+                except Exception:  # noqa: BLE001 - network/timeout degrade
+                    return None, [], []
+            if transient:
+                break
+        if not transient:
+            return None, [], []
+        time.sleep(0.5 * (2 ** attempt))
+    return None, [], []
+
+
+def _grounded_payloads(system: str, user: str, temperature: float) -> list[dict]:
+    """Two payload attempts: with real Google Search grounding, then without."""
+    base = {
+        "contents": [{"parts": [{"text": user}]}],
+        "systemInstruction": {"parts": [{"text": system}]},
+        "generationConfig": {"responseMimeType": "application/json", "temperature": temperature},
+    }
+    return [
+        {**base, "tools": _GROUNDING_TOOL},
+        base,
+    ]
+
 
 def _call_gemini(system: str, user: str, temperature: float = 0.1) -> dict | None:
     key = os.environ.get("GEMINI_API_KEY", "")
@@ -609,7 +725,7 @@ def final_verdict_engine(headline: str, article: str, language: str,
     }
     key = _cache_key(
         "final_engine", headline[:1500], article[:3500], language,
-        initial_verdict, str(initial_confidence),
+        initial_verdict, str(initial_confidence), date.today().isoformat(),
         json.dumps(search_results or [], sort_keys=True, default=str)[:4000],
     )
     if key in _CACHE:
@@ -639,19 +755,22 @@ def _run_final_engine(headline: str, article: str, language: str,
         headline=(headline or "").strip()[:2000],
         article=(article or "").strip()[:4000],
         language=language or "english",
+        today=date.today().isoformat(),
         initial_verdict=str(initial_verdict or "n/a").upper(),
         initial_confidence=f"{initial_confidence:.0f}" if initial_confidence else "n/a",
         initial_reasoning=str(initial_reasoning or "")[:400],
         search_results=format_search_results(search_results),
         provisional=provisional_txt,
     )
-    obj = _call_gemini(_SYSTEM_FINAL_ENGINE, user, temperature=0.1)
+    obj, chunks, queries = _call_gemini_grounded(_SYSTEM_FINAL_ENGINE, user,
+                                                 temperature=0.1)
     if not obj:
         return None
+    grounding_urls = {c["url"] for c in chunks}
+    allowed_urls |= grounding_urls
     label = _normalize_final_label(obj.get("verdict") or obj.get("label")
                                    or obj.get("decision"))
-    # The engine is REAL/FAKE only: a refusal maps to "no verdict" and the
-    # honest evidence-led pipeline result is kept.
+    # The engine is REAL/FAKE only: a refusal maps to "no verdict".
     if label not in ("REAL", "FALSE"):
         return None
     try:
@@ -663,17 +782,29 @@ def _run_final_engine(headline: str, article: str, language: str,
         was_correct = bool(obj["initial_model_was_correct"])
     else:
         was_correct = bool(initial_norm) and (label == initial_norm)
+    sources = _clean_sources_checked(
+        obj.get("sources_checked"), allowed_urls, search_results)
+    # Surface real Google Search grounding results even if the model omitted them.
+    if not sources:
+        sources = [
+            {"title": c["title"], "url": c["url"], "source_type": "Google Search",
+             "published_date": None, "supports_claim": True}
+            for c in chunks[:8]
+        ]
+    logger.info(
+        "[GEMINI] Parsed verdict=%s confidence=%d sources=%d queries=%d",
+        label, round(conf), len(sources), len(queries),
+    )
     return {
         "available": True,
         "source": "gemini",
         "model": GEMINI_MODEL,
-        "verdict": label,            # "REAL" or "FALSE" (spec convention)
+        "verdict": label,            # "REAL" or "FALSE" (final convention)
         "confidence": round(conf),   # 0-100 (evidence strength)
         "initial_model_verdict": _normalize_final_label(initial_verdict) or "n/a",
         "initial_model_confidence": round(initial_confidence, 3),
         "initial_model_was_correct": was_correct,
         "reasoning": str(obj.get("reasoning", ""))[:800],
-        "sources_checked": _clean_sources_checked(
-            obj.get("sources_checked"), allowed_urls, search_results),
+        "sources_checked": sources,
         "key_claims_verified": _clean_key_claims(obj.get("key_claims_verified")),
     }
