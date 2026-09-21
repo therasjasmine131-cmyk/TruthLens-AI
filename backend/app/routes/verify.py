@@ -108,8 +108,8 @@ def _rule_engine_basis(verification: dict | None) -> tuple[str, float, str, str]
         f"Evidence rules could not reach a strong verdict; "
         f"labelled {label} with low confidence."))
     note = (
-        "Rule-engine last resort: Gemini and Ollama were unavailable, so the "
-        "evidence-derived result was used with confidence capped low."
+        "Rule-engine last resort: Gemini, OpenAI and Ollama were unavailable, "
+        "so the evidence-derived result was used with confidence capped low."
     )
     return label, round(conf, 2), reasoning, note
 
