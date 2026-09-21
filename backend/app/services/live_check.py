@@ -27,6 +27,7 @@ GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
 MAX_INPUT_CHARS = 6000
 TIMEOUT_SECONDS = 25
+GROUNDED_TIMEOUT_SECONDS = 60
 MAX_RETRIES = 2
 
 _SYSTEM_PROMPT = (
@@ -119,7 +120,8 @@ def live_news_check(headline: str | None, article: str | None) -> dict | None:
                         headers={**auth, "Content-Type": "application/json"},
                         method="POST",
                     )
-                    with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:  # noqa: S310 (https only)
+                    timeout = GROUNDED_TIMEOUT_SECONDS if grounded else TIMEOUT_SECONDS
+                    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (https only)
                         data = json.loads(resp.read().decode("utf-8"))
                     reply = _text_from_response(data)
                     if not reply:
@@ -133,19 +135,23 @@ def live_news_check(headline: str | None, article: str | None) -> dict | None:
                     parsed["sources"] = chunks
                     parsed["web_search_queries"] = queries
                     logger.info(
-                        "[GEMINI] live-check label=%s confidence=%s grounded_sources=%d queries=%d",
+                        "[GEMINI] live-check label=%s confidence=%s grounded=%s sources=%d queries=%d",
                         parsed.get("label"), parsed.get("confidence"),
-                        len(chunks), len(queries),
+                        grounded, len(chunks), len(queries),
                     )
                     return parsed
                 except urllib.error.HTTPError as exc:
-                    if exc.code in (400, 401, 403):
+                    if grounded and exc.code == 400:
                         continue
+                    if exc.code in (400, 401, 403):
+                        break
                     if exc.code in (429, 500, 503):
                         transient = True
                         break
                     return None
-                except Exception:  # noqa: BLE001 - network/timeout/parse: degrade
+                except Exception:  # noqa: BLE001 - network/timeout: try non-grounded
+                    if grounded:
+                        continue
                     return None
             if transient:
                 break

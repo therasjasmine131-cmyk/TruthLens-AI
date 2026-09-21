@@ -37,6 +37,7 @@ BAZAARLINK_MODEL = os.environ.get("BAZAARLINK_MODEL", "deepseek/deepseek-v4-flas
 BAZAARLINK_FREE_FALLBACK = os.environ.get("BAZAARLINK_FREE_FALLBACK", "auto:free")
 
 TIMEOUT_SECONDS = 18
+GROUNDED_TIMEOUT_SECONDS = 60
 MAX_RETRIES = 1
 MAX_EVIDENCE_IN_CONTEXT = 5
 MAX_EVIDENCE_CHARS = 320
@@ -299,13 +300,15 @@ def _call_gemini_grounded(system: str, user: str,
         transient = False
         for auth in headers_list:
             for payload in _grounded_payloads(system, user, temperature):
+                grounded = "tools" in payload
                 try:
                     req = urllib.request.Request(
                         url, data=json.dumps(payload).encode("utf-8"),
                         headers={**auth, "Content-Type": "application/json"},
                         method="POST",
                     )
-                    with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:  # noqa: S310 https only
+                    timeout = GROUNDED_TIMEOUT_SECONDS if grounded else TIMEOUT_SECONDS
+                    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 https only
                         data = json.loads(resp.read().decode("utf-8"))
                     text = _text_from_gemini(data)
                     if not text:
@@ -315,18 +318,22 @@ def _call_gemini_grounded(system: str, user: str,
                         continue
                     chunks, queries = _grounding_from_gemini(data)
                     logger.info(
-                        "[GEMINI] final-engine parsed verdict=%s  grounded_chunks=%d  queries=%d",
-                        obj.get("verdict"), len(chunks), len(queries),
+                        "[GEMINI] final-engine parsed verdict=%s  grounded=%s  chunks=%d  queries=%d",
+                        obj.get("verdict"), grounded, len(chunks), len(queries),
                     )
                     return obj, chunks, queries
                 except urllib.error.HTTPError as exc:
-                    if exc.code in (400, 401, 403):
+                    if grounded and exc.code == 400:
                         continue
+                    if exc.code in (400, 401, 403):
+                        break
                     if exc.code in (429, 500, 503):
                         transient = True
                         break
                     return None, [], []
-                except Exception:  # noqa: BLE001 - network/timeout degrade
+                except Exception:  # noqa: BLE001 - network/timeout: try non-grounded
+                    if grounded:
+                        continue
                     return None, [], []
             if transient:
                 break
