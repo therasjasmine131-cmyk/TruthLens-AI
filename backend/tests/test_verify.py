@@ -47,7 +47,7 @@ def _verification(verdict="UNVERIFIED", *, evidence=(), sources=(),
 def verify_client(client, monkeypatch):
     def _make(live=None, verdict="UNVERIFIED", evidence=(), sources=(),
               language=("english", "English"), gemini_validation=None,
-              ollama=None, verify_text=None):
+              ollama=None, openai=None, verify_text=None):
         import app.routes.verify as verify_mod
 
         monkeypatch.setattr(verify_mod, "live_news_check", lambda *a, **k: live)
@@ -55,6 +55,7 @@ def verify_client(client, monkeypatch):
             verdict, evidence=evidence, sources=sources, language=language,
             gemini_validation=gemini_validation))
         monkeypatch.setattr(verify_mod, "ollama_judge", lambda *a, **k: ollama)
+        monkeypatch.setattr(verify_mod, "openai_judge", lambda *a, **k: openai)
         if verify_text is not None:
             monkeypatch.setattr(verify_mod, "verify_text", verify_text)
         return client
@@ -86,6 +87,28 @@ def test_maps_false_to_false(verify_client):
     body = resp.get_json()
     assert body["final_verdict"] == "FALSE"
     assert body["verdict_source"] == "live-check"
+
+
+def test_openai_fallback_judges_evidence(verify_client):
+    """Gemini unavailable but OpenAI IS reachable: OpenAI judges the SAME
+    gathered evidence and the endpoint returns its verdict."""
+    client = verify_client(
+        live={"label": "UNVERIFIED", "confidence": 0.4, "reasoning": "too recent"},
+        verdict="UNVERIFIED",
+        evidence=[{"title": "Widget Corp unveils fusion", "relation": "SUPPORT",
+                   "source_name": "example.in", "url": "https://a.example"}],
+        openai={"label": "REAL", "confidence": 0.66,
+                "reasoning": "reporting corroborates the claim"},
+        ollama={"label": "FAKE", "confidence": 0.9, "reasoning": "should not be used"},
+    )
+    resp = _post(client, headline="Widget Corp unveiled a fusion reactor.")
+    body = resp.get_json()
+    assert resp.status_code == 200
+    assert body["final_verdict"] == "TRUE"
+    assert body["verdict_source"] == "openai"
+    assert body["confidence"] == 0.66
+    assert body["reasoning"] == "reporting corroborates the claim"
+    assert body["fallback_note"]
 
 
 def test_ollama_fallback_judges_evidence(verify_client):

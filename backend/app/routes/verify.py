@@ -23,6 +23,7 @@ from flask import Blueprint, jsonify, request
 
 from ..services.live_check import live_news_check
 from ..services.ollama_check import ollama_judge
+from ..services.openai_check import openai_judge
 from ..services.verification_service import run_verification
 from ..services.verification.language import VALID_MODES
 from ..services.verification.verifier import verify_text
@@ -147,7 +148,26 @@ def verify():
     fallback_note = None
 
     if verdict is None:
-        # Tier 2: local Ollama judges the SAME gathered evidence (no search).
+        # Tier 2: OpenAI (ChatGPT) judges the SAME gathered evidence (no search).
+        oai = openai_judge(
+            headline, article,
+            _evidence_digest(verification),
+            language="english" if language == "auto" else language,
+        )
+        if oai:
+            verdict = oai.get("label")
+            source = "openai"
+            confidence_value = oai.get("confidence")
+            reasoning_value = oai.get("reasoning")
+            fallback_note = (
+                "Gemini was unavailable (quota/error), so OpenAI (ChatGPT) judged "
+                "the already-gathered evidence. AI source: OpenAI."
+            )
+            logger.info("[API] OpenAI fallback verdict: %s confidence=%s",
+                        verdict, confidence_value)
+
+    if verdict is None:
+        # Tier 3: local Ollama judges the SAME gathered evidence (no search).
         ollama = ollama_judge(
             headline, article,
             _evidence_digest(verification),
@@ -159,14 +179,14 @@ def verify():
             confidence_value = ollama.get("confidence")
             reasoning_value = ollama.get("reasoning")
             fallback_note = (
-                "Gemini was unavailable (quota/error), so a local Ollama model "
+                "Gemini and OpenAI were unavailable, so a local Ollama model "
                 "judged the already-gathered evidence. AI source: Ollama."
             )
             logger.info("[API] Ollama fallback verdict: %s confidence=%s",
                         verdict, confidence_value)
 
     if verdict is None:
-        # Tier 3: rule engine, forced REAL/FAKE, confidence capped low.
+        # Tier 4: rule engine, forced REAL/FAKE, confidence capped low.
         verdict, confidence_value, reasoning_value, fallback_note = \
             _rule_engine_basis(verification)
         source = "rule-engine"
@@ -200,11 +220,16 @@ def verify():
         ),
         "ollama": (
             "A local Ollama model judged the gathered evidence because Gemini "
-            "was unavailable. The local trained network's signal is only a "
-            "suggestion shown next to the verdict."
+            "and OpenAI were unavailable. The local trained network's signal is "
+            "only a suggestion shown next to the verdict."
+        ),
+        "openai": (
+            "OpenAI (ChatGPT) decided TRUE or FALSE from the gathered evidence "
+            "because Gemini was unavailable. The local trained network's signal "
+            "is only a suggestion shown next to the verdict."
         ),
         "rule-engine": (
-            "Rule-engine result used because Gemini and Ollama were both "
+            "Rule-engine result used because Gemini, OpenAI and Ollama were all "
             "unavailable; confidence is capped low."
         ),
     }

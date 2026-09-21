@@ -7,6 +7,8 @@ from flask import Blueprint, jsonify, request
 from ..config import Config
 from ..services.analyzer import analyze, analyze_headline_only
 from ..services.live_check import live_news_check
+from ..services.openai_check import openai_judge
+from .verify import _evidence_digest
 
 bp = Blueprint("analyze", __name__, url_prefix="/api")
 
@@ -15,6 +17,19 @@ def _live_check(headline, article):
     if not Config.GEMINI_API_KEY:
         return None
     return live_news_check(headline, article)
+
+
+def _openai_verdict(body: dict, headline, article) -> dict | None:
+    """OpenAI (ChatGPT) fallback verdict over the gathered evidence."""
+    oai = openai_judge(headline, article, _evidence_digest(body.get("verification")))
+    if not oai or not oai.get("label"):
+        return None
+    return {
+        "verdict": oai["label"],
+        "confidence": oai.get("confidence", 0.5),
+        "reasoning": oai.get("reasoning", ""),
+        "source": "openai",
+    }
 
 
 def _engine_ai_verdict(verification: dict | None) -> dict | None:
@@ -47,6 +62,7 @@ def _apply_ai_final(body: dict, ai_verdict: dict | None) -> None:
     reasoning = ai_verdict.get("reasoning", "") or ""
     authority = {
         "gemini": "gemini (AI)",
+        "openai": "openai (AI)",
         "evidence+ai": "evidence+ai",
         "rule-engine": "rule-engine",
     }.get(ai_verdict.get("source"), ai_verdict.get("source", "ai"))
@@ -145,6 +161,8 @@ def analyze_article():
         live_check = _live_check(headline, article)
         ai_verdict = _ai_verdict(live_check, result.get("verification"))
         if ai_verdict is None or ai_verdict.get("verdict") not in ("REAL", "FAKE"):
+            ai_verdict = _openai_verdict(result, headline, article)
+        if ai_verdict is None or ai_verdict.get("verdict") not in ("REAL", "FAKE"):
             ai_verdict = _force_rule_engine(result)
         _apply_ai_final(result, ai_verdict)
 
@@ -167,6 +185,8 @@ def analyze_headline():
     if ai_verdict is None:
         live_check = _live_check(headline, None)
         ai_verdict = _ai_verdict(live_check, result.get("verification"))
+        if ai_verdict is None or ai_verdict.get("verdict") not in ("REAL", "FAKE"):
+            ai_verdict = _openai_verdict(result, headline, None)
         if ai_verdict is None or ai_verdict.get("verdict") not in ("REAL", "FAKE"):
             ai_verdict = _force_rule_engine(result)
         _apply_ai_final(result, ai_verdict)
