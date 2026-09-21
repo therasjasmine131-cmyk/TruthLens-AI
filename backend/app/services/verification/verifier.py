@@ -421,7 +421,7 @@ def verify_text(text: str | None, headline: str | None = None,
         e.get("retrieved_from", "unknown")
         for cr in claim_results for e in cr["evidence"]
     })
-    live_used = bool({"wikipedia", "newsapi", "factcheck", "gemini"} & set(retrieved_sources))
+    live_used = bool({"wikipedia", "web-search", "gdelt", "newsapi", "factcheck", "gemini"} & set(retrieved_sources))
 
     ai_count = sum(1 for k, v in ai1_by_idx.items() if v)
     review_count = sum(1 for k, v in ai2_by_idx.items() if v)

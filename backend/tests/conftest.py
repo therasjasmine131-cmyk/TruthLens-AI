@@ -27,6 +27,8 @@ def _no_cloud_keys(monkeypatch):
         "BAZAARLINK_API_KEY",
     ):
         monkeypatch.delenv(name, raising=False)
+    # Deterministic, network-free evidence (knowledge base only) for unit tests.
+    monkeypatch.setenv("TRUTHLENS_LIVE_EVIDENCE", "0")
 
 
 @pytest.fixture()
