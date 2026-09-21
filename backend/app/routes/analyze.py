@@ -45,6 +45,11 @@ def _apply_ai_final(body: dict, ai_verdict: dict | None) -> None:
         return
     confidence = ai_verdict.get("confidence", 0.5)
     reasoning = ai_verdict.get("reasoning", "") or ""
+    authority = {
+        "gemini": "gemini (AI)",
+        "evidence+ai": "evidence+ai",
+        "rule-engine": "rule-engine",
+    }.get(ai_verdict.get("source"), ai_verdict.get("source", "ai"))
     overall = verification.get("overall")
     if overall:
         overall["verdict"] = label
@@ -54,10 +59,40 @@ def _apply_ai_final(body: dict, ai_verdict: dict | None) -> None:
     for claim in verification.get("claims", []) or []:
         claim["verdict"] = label
         claim["final_verdict"] = label
-        claim["final_authority"] = "gemini (AI) - live check"
+        claim["final_authority"] = authority
         claim["final_confidence"] = confidence
     for item in verification.get("evidence_matrix", []) or []:
         item["claim_verdict"] = label
+
+
+def _force_rule_engine(body: dict) -> dict | None:
+    """Last-resort definitive verdict when no AI signal decided at all.
+
+    Mirrors /api/verify behaviour: forced REAL/FAKE, confidence capped low,
+    so the Analyze page never presents UNVERIFIED as the answer.
+    """
+    verification = body.get("verification") or {}
+    overall = verification.get("overall") or {}
+    prediction = str(body.get("prediction") or "").upper()
+    overall_verdict = str(overall.get("verdict") or "").upper()
+    if overall_verdict in ("REAL", "FALSE", "FAKE"):
+        label = "REAL" if overall_verdict == "REAL" else "FALSE"
+        conf = max(0.0, min(0.55, float(overall.get("confidence") or 0.0)))
+        reasoning = overall.get("explanation") or ""
+    elif prediction in ("REAL", "FALSE", "FAKE"):
+        label = "FALSE" if prediction == "FAKE" else prediction
+        conf = 0.35
+        reasoning = (
+            "No AI verdict was reachable; the neural network was the only "
+            "usable signal, applied with low confidence."
+        )
+    else:
+        label = "REAL"
+        conf = 0.30
+        reasoning = "No decisive signal was available; labelled with minimal confidence."
+    verdict = {"verdict": label, "confidence": round(conf, 2), "source": "rule-engine"}
+    _apply_ai_final(body, verdict)
+    return verdict
 
 
 def _ai_verdict(live_check: dict | None, verification: dict | None) -> dict | None:
@@ -109,6 +144,8 @@ def analyze_article():
         # Engine gave no verdict - Gemini's live check can still decide.
         live_check = _live_check(headline, article)
         ai_verdict = _ai_verdict(live_check, result.get("verification"))
+        if ai_verdict is None or ai_verdict.get("verdict") not in ("REAL", "FAKE"):
+            ai_verdict = _force_rule_engine(result)
         _apply_ai_final(result, ai_verdict)
 
     result["live_check"] = live_check
@@ -130,6 +167,8 @@ def analyze_headline():
     if ai_verdict is None:
         live_check = _live_check(headline, None)
         ai_verdict = _ai_verdict(live_check, result.get("verification"))
+        if ai_verdict is None or ai_verdict.get("verdict") not in ("REAL", "FAKE"):
+            ai_verdict = _force_rule_engine(result)
         _apply_ai_final(result, ai_verdict)
 
     result["live_check"] = live_check
