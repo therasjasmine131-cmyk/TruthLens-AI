@@ -141,7 +141,7 @@ def live_news_check(headline: str | None, article: str | None) -> dict | None:
                     )
                     return parsed
                 except urllib.error.HTTPError as exc:
-                    if grounded and exc.code == 400:
+                    if grounded and exc.code in (400, 429, 500, 503):
                         continue
                     if exc.code in (400, 401, 403):
                         break
