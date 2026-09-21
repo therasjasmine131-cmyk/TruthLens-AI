@@ -5,13 +5,16 @@ module fetches REAL current web results without any API key:
 
 * Google News RSS (``news.google.com/rss/search``) for news-shaped queries.
 * DuckDuckGo HTML (``html.duckduckgo.com/html/``) as a general fallback.
+* Bing News RSS (``www.bing.com/news/search?format=rss``) as a third fallback.
 
-Only stdlib is used. Every failure degrades to an empty list so callers keep
-working offline.
+All three are fetched in parallel and merged, so a single slow/blocked source
+never makes the search time out. Only stdlib is used. Every failure degrades
+to an empty list so callers keep working offline.
 """
 
 from __future__ import annotations
 
+import concurrent.futures
 import html
 import logging
 import re
@@ -22,7 +25,8 @@ import xml.etree.ElementTree as ET
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT_SECONDS = 8
+_TIMEOUT_SECONDS = 10
+MAX_WORKERS = 3
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/125.0 Safari/537.36"
@@ -112,6 +116,51 @@ def _parse_ddg_html(page: str, limit: int) -> list[dict]:
     return results
 
 
+def _bing_real_url(link: str) -> str:
+    """Resolve a Bing News ``apiclick`` redirect to the underlying article URL."""
+    if "bing.com/news/apiclick" not in link:
+        return link
+    qs = urllib.parse.parse_qs(urllib.parse.urlparse(link).query)
+    real = (qs.get("url") or [None])[0]
+    return real if real else link
+
+
+def _parse_bing_news_rss(xml_text: str, limit: int) -> list[dict]:
+    """Parse a Bing News RSS feed into real result dicts."""
+    results: list[dict] = []
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return results
+    for item in root.iter("item"):
+        title = _clean(item.findtext("title") or "")
+        link = (item.findtext("link") or "").strip()
+        if not title or not link:
+            continue
+        link = _bing_real_url(link)
+        source_name = ""
+        for child in item:
+            if child.tag.split("}")[-1].lower().endswith("source"):
+                source_name = _clean(child.text or "")
+                break
+        pub = _clean(item.findtext("pubDate") or "")
+        snippet = _clean(re.sub(r"<[^>]+>", "", item.findtext("description") or ""))
+        results.append({
+            "title": title[:200],
+            "url": link,
+            "snippet": (snippet or title)[:240],
+            "source_name": source_name or _domain(link),
+            "domain": _domain(link),
+            "published_date": pub or None,
+            "source_type": "news",
+            "type": "news",
+            "relation": "NEUTRAL",
+        })
+        if len(results) >= limit:
+            break
+    return results
+
+
 def _fetch(url: str) -> str | None:
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     try:
@@ -123,27 +172,52 @@ def _fetch(url: str) -> str | None:
 
 
 def search_web(query: str, limit: int = 6) -> list[dict]:
-    """Return real current web results for ``query`` (never raises)."""
+    """Return real current web results for ``query`` (never raises).
+
+    Google News RSS, DuckDuckGo HTML and Bing News RSS are fetched in parallel
+    and merged (deduped by URL), so the slowest or the blocked source cannot
+    starve the others.
+    """
     query = (query or "").strip()
     if not query:
         return []
     encoded = urllib.parse.quote_plus(query)
-    news_url = (
-        "https://news.google.com/rss/search?q="
-        f"{encoded}&hl=en-IN&gl=IN&ceid=IN:en"
+    urls = (
+        (
+            "https://news.google.com/rss/search?q="
+            f"{encoded}&hl=en-IN&gl=IN&ceid=IN:en"
+        ),
+        f"https://html.duckduckgo.com/html/?q={encoded}",
+        f"https://www.bing.com/news/search?q={encoded}&format=rss",
     )
-    page = _fetch(news_url)
-    if page:
-        results = _parse_google_news_rss(page, limit)
-        if results:
-            logger.info("[SEARCH] google-news results=%d q=%s", len(results), query[:80])
-            return results
-    ddg_url = f"https://html.duckduckgo.com/html/?q={encoded}"
-    page = _fetch(ddg_url)
-    if page:
-        results = _parse_ddg_html(page, limit)
-        if results:
-            logger.info("[SEARCH] duckduckgo results=%d q=%s", len(results), query[:80])
-            return results
-    logger.info("[SEARCH] no results q=%s", query[:80])
-    return []
+    pages: list[str | None] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        pages = [f.result() for f in [pool.submit(_fetch, u) for u in urls]]
+
+    parsed = []
+    if pages[0]:
+        parsed.append(_parse_google_news_rss(pages[0], limit))
+    if pages[2]:
+        parsed.append(_parse_bing_news_rss(pages[2], limit))
+    if pages[1]:
+        parsed.append(_parse_ddg_html(pages[1], limit))
+
+    results: list[dict] = []
+    seen_urls: set[str] = set()
+    for batch in parsed:
+        for r in batch:
+            url = r.get("url") or ""
+            if url in seen_urls:
+                continue
+            if url:
+                seen_urls.add(url)
+            results.append(r)
+            if len(results) >= limit:
+                break
+        if len(results) >= limit:
+            break
+    if results:
+        logger.info("[SEARCH] merged results=%d q=%s", len(results), query[:80])
+    else:
+        logger.info("[SEARCH] no results q=%s", query[:80])
+    return results[:limit]

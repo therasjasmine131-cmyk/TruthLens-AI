@@ -208,12 +208,12 @@ def _gdelt(query: str) -> list[dict]:
 
 
 def _live_news(query: str) -> list[dict]:
-    """Keyless live news search: Google News RSS -> DuckDuckGo fallback.
+    """Keyless live news search: Google News RSS -> DuckDuckGo -> Bing fallback.
 
     The same free search used to ground Gemini, wired directly into the
     evidence pipeline so real reporting is shown even when Gemini is down.
     """
-    from .web_search import search_web
+    from ..web_search import search_web
 
     results = search_web(query or "", limit=5)
     items: list[dict] = []

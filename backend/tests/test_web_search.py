@@ -70,8 +70,27 @@ def test_search_web_uses_news_then_falls_back(monkeypatch):
 
     monkeypatch.setattr(web_search, "_fetch", fake_fetch)
     items = web_search.search_web("kerala rain", limit=5)
-    assert len(items) == 2
-    assert calls and "news.google.com" in calls[0]
+    # Google News (2) + DuckDuckGo (1) are fetched in parallel and merged.
+    assert len(items) == 3
+    assert any("news.google.com" in c for c in calls)
+
+
+def test_search_web_parses_bing_news_rss(monkeypatch):
+    bing = """<?xml version="1.0"?>
+    <rss version="2.0" xmlns:News="https://www.bing.com/news/search">
+      <channel><item>
+        <title>CM to launch one-gram gold ring scheme</title>
+        <link>http://www.bing.com/news/apiclick.aspx?ref=FexRss&amp;url=https%3a%2f%2ftoi.example%2fstory&amp;c=1</link>
+        <description>Babies born in government hospitals get rings.</description>
+        <pubDate>Fri, 18 Sep 2026 19:37:00 GMT</pubDate>
+        <News:Source>Times of India</News:Source>
+      </item></channel></rss>
+    """
+    monkeypatch.setattr(web_search, "_fetch", lambda url: bing if "bing.com/news" in url else "")
+    items = web_search.search_web("gold ring scheme", limit=5)
+    assert len(items) == 1
+    assert items[0]["url"] == "https://toi.example/story"
+    assert items[0]["source_name"] == "Times of India"
 
 
 def test_search_web_falls_back_to_ddg_when_news_empty(monkeypatch):
@@ -89,6 +108,23 @@ def test_search_web_falls_back_to_ddg_when_news_empty(monkeypatch):
 
 def test_search_web_empty_query_returns_empty():
     assert web_search.search_web("   ") == []
+
+
+def test_live_news_retriever_resolves_import_and_returns_items(monkeypatch):
+    """Regression: _live_news used a broken relative import (.web_search)
+    that silently returned [] on every call, starving the evidence pipeline."""
+    from app.services.verification import evidence
+
+    fake_items = [
+        {"title": "CM to launch gold ring scheme", "url": "https://example.com/1",
+         "source_name": "Example", "domain": "example.com"}
+    ]
+    monkeypatch.setattr(web_search, "search_web", lambda q, limit=5: fake_items)
+    out = evidence._live_news("gold ring scheme")
+    assert len(out) == 1
+    assert out[0]["retrieved_from"] == "web-search"
+    assert out[0]["relation_hint"] is None
+    assert out[0]["has_full_text"] is False
 
 
 def test_search_web_never_raises_on_fetch_failure(monkeypatch):
