@@ -50,7 +50,7 @@ def _engine_ai_verdict(verification: dict | None) -> dict | None:
 def _apply_ai_final(body: dict, ai_verdict: dict | None) -> None:
     """Normalize every verdict surface to the AI verdict (live-check path)."""
     verdict = (ai_verdict or {}).get("verdict")
-    if verdict not in ("REAL", "FAKE"):
+    if verdict not in ("REAL", "FAKE", "FALSE"):
         return
     label = "REAL" if verdict == "REAL" else "FALSE"
     body["verdict"] = label
@@ -106,7 +106,11 @@ def _force_rule_engine(body: dict) -> dict | None:
         label = "REAL"
         conf = 0.30
         reasoning = "No decisive signal was available; labelled with minimal confidence."
-    verdict = {"verdict": label, "confidence": round(conf, 2), "source": "rule-engine"}
+    verdict = {
+        "verdict": "FAKE" if label == "FALSE" else "REAL",
+        "confidence": round(conf, 2),
+        "source": "rule-engine",
+    }
     _apply_ai_final(body, verdict)
     return verdict
 
