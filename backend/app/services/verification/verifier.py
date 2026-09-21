@@ -301,14 +301,33 @@ def _run_ai_stages(claims: list[dict], evidence_results: list[dict],
     limit = min(MAX_AI_CLAIMS, len(claims))
     lang_code = language.get("code", "english")
 
+    def _evidence_lean(classified: list[dict]) -> str | None:
+        s = sum(1 for e in classified if e["relation"] == "SUPPORTS")
+        c = sum(1 for e in classified if e["relation"] == "CONTRADICTS")
+        if s == c:
+            return None
+        return "SUPPORT" if s > c else "CONTRADICT"
+
     def _job(idx: int):
         claim = claims[idx]
         classified = evidence_results[idx]["classified"]
         ai1 = ai_stage.analyze_claim_ai(
             claim["text"], classified, lang_code, article=full_context)
-        ai2 = ai_stage.review_claim_ai(
-            claim["text"], classified, ai1, lang_code, article=full_context) \
-            if ai1 else None
+        ai2 = None
+        if ai1:
+            # Skip the adversarial review when AI #1 is confident AND agrees
+            # with the evidence majority - saves a Gemini round-trip per claim.
+            lean = _evidence_lean(classified)
+            ai1_verdict = ai1.get("decision")
+            ai1_conf = ai1.get("confidence", 0.0)
+            redundant = (
+                lean is not None
+                and ai1_verdict == lean
+                and ai1_conf >= 0.75
+            )
+            if not redundant:
+                ai2 = ai_stage.review_claim_ai(
+                    claim["text"], classified, ai1, lang_code, article=full_context)
         return idx, ai1, ai2
 
     try:
@@ -333,11 +352,16 @@ def verify_text(text: str | None, headline: str | None = None,
     for claim in claims:
         claim["_language"] = lang["code"]
 
-    evidence_results = []
-    for claim in claims:
+    def _evidence_job(claim: dict) -> dict:
         ml = _ml_signal(claim["text"])
         claim["_ml"] = ml
-        evidence_results.append(_evidence_signal(claim, ml))
+        return _evidence_signal(claim, ml)
+
+    evidence_results = []
+    if claims:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+            futures = [pool.submit(_evidence_job, claim) for claim in claims]
+            evidence_results = [f.result() for f in futures]
 
     ai1_by_idx, ai2_by_idx = _run_ai_stages(claims, evidence_results, lang, full_text)
 

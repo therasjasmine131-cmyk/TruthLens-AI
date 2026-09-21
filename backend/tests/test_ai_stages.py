@@ -379,7 +379,7 @@ def test_verify_text_records_ai_stages(monkeypatch):
 
     monkeypatch.setattr(ver.ai_stage, "available", lambda: True)
     monkeypatch.setattr(ver.ai_stage, "analyze_claim_ai",
-                        lambda claim, evidence, lang, article=None: _ai1("SUPPORT", 0.9))
+                        lambda claim, evidence, lang, article=None: _ai1("SUPPORT", 0.5))
     monkeypatch.setattr(ver.ai_stage, "review_claim_ai",
                         lambda claim, evidence, ai1, lang, article=None: _ai2("SUPPORT", 0.85))
 
