@@ -150,9 +150,15 @@ def test_analyze_headline_route_includes_live_check(client, monkeypatch):
     assert body["history_id"] is not None
 
 
-def test_analyze_headline_route_without_key_omits_live_check(client, monkeypatch):
+def test_analyze_headline_route_without_ai_returns_error(client, monkeypatch):
     _patch_model(monkeypatch)
     monkeypatch.setattr(Config, "GEMINI_API_KEY", "")
+    import app.routes.analyze as analyze_mod
+
+    monkeypatch.setattr(analyze_mod, "openai_judge", lambda *a, **k: None)
+    monkeypatch.setattr(analyze_mod, "ollama_judge", lambda *a, **k: None)
     resp = client.post("/api/analyze/headline", json={"headline": "A short headline here"})
-    assert resp.status_code == 200
-    assert resp.get_json()["live_check"] is None
+    assert resp.status_code == 503
+    body = resp.get_json()
+    assert body["status"] == "ai_unavailable"
+    assert "unavailable" in body["error"].lower()

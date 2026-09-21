@@ -43,6 +43,7 @@ export function Analyze() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [emptyNotice, setEmptyNotice] = useState<string | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
 
   const stats = useMemo(() => computeTextStats(headline, article), [headline, article]);
 
@@ -51,6 +52,7 @@ export function Analyze() {
     if (!headline.trim() && !article.trim()) {
       setResult(null);
       setPhase("idle");
+      setAiError(null);
       setEmptyNotice("Please enter a headline or article to analyze.");
       toast("error", "Nothing to analyze", "Add an article or headline first.");
       return;
@@ -60,6 +62,7 @@ export function Analyze() {
       return;
     }
     setEmptyNotice(null);
+    setAiError(null);
     setLoading(true);
     setPhase("running");
     setStep(0);
@@ -75,7 +78,9 @@ export function Analyze() {
     } catch (err) {
       clearInterval(timer);
       setPhase("idle");
-      toast("error", "Analysis failed", err instanceof Error ? err.message : "Unknown error");
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setAiError(message);
+      toast("error", "Analysis failed", message);
     } finally {
       setLoading(false);
     }
@@ -87,6 +92,7 @@ export function Analyze() {
     setResult(null);
     setPhase("idle");
     setEmptyNotice(null);
+    setAiError(null);
     toast("info", "Demo loaded", demo.disclaimer);
   };
 
@@ -193,7 +199,18 @@ export function Analyze() {
         <div className="min-w-0">
           {phase === "idle" && (
             <Card className="min-h-[480px]">
-              {emptyNotice ? (
+              {aiError ? (
+                <div className="flex h-full flex-col items-center justify-center p-8 text-center">
+                  <AlertTriangle size={22} className="mb-4 text-rose-500" />
+                  <p className="text-sm font-semibold text-rose-700 dark:text-rose-400">
+                    AI verification unavailable
+                  </p>
+                  <p className="mt-2 max-w-md text-xs text-slate-600 dark:text-slate-300">{aiError}</p>
+                  <p className="mt-3 text-xs text-slate-400 dark:text-slate-500">
+                    No verdict was generated. Please try again shortly.
+                  </p>
+                </div>
+              ) : emptyNotice ? (
                 <div className="flex h-full flex-col items-center justify-center p-8 text-center">
                   <AlertTriangle size={22} className="mb-4 text-amber-500" />
                   <p className="text-sm font-medium text-slate-700 dark:text-slate-200">{emptyNotice}</p>

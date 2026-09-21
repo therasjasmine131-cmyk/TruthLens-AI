@@ -7,10 +7,17 @@ from flask import Blueprint, jsonify, request
 from ..config import Config
 from ..services.analyzer import analyze, analyze_headline_only
 from ..services.live_check import live_news_check
+from ..services.ollama_check import ollama_judge
 from ..services.openai_check import openai_judge
 from .verify import _evidence_digest
 
 bp = Blueprint("analyze", __name__, url_prefix="/api")
+
+AI_UNAVAILABLE_MESSAGE = (
+    "AI verification is temporarily unavailable: every AI provider "
+    "(Gemini, ChatGPT and the local model) is rate-limited, out of quota or "
+    "unreachable. Please try again in a few minutes."
+)
 
 
 def _live_check(headline, article):
@@ -29,6 +36,19 @@ def _openai_verdict(body: dict, headline, article) -> dict | None:
         "confidence": oai.get("confidence", 0.5),
         "reasoning": oai.get("reasoning", ""),
         "source": "openai",
+    }
+
+
+def _ollama_verdict(body: dict, headline, article) -> dict | None:
+    """Local Ollama fallback verdict over the gathered evidence."""
+    ollama = ollama_judge(headline, article, _evidence_digest(body.get("verification")))
+    if not ollama or not ollama.get("label"):
+        return None
+    return {
+        "verdict": ollama["label"],
+        "confidence": ollama.get("confidence", 0.5),
+        "reasoning": ollama.get("reasoning", ""),
+        "source": "ollama",
     }
 
 
@@ -63,8 +83,8 @@ def _apply_ai_final(body: dict, ai_verdict: dict | None) -> None:
     authority = {
         "gemini": "gemini (AI)",
         "openai": "openai (AI)",
+        "ollama": "ollama (AI)",
         "evidence+ai": "evidence+ai",
-        "rule-engine": "rule-engine",
     }.get(ai_verdict.get("source"), ai_verdict.get("source", "ai"))
     overall = verification.get("overall")
     if overall:
@@ -81,72 +101,32 @@ def _apply_ai_final(body: dict, ai_verdict: dict | None) -> None:
         item["claim_verdict"] = label
 
 
-def _force_rule_engine(body: dict) -> dict | None:
-    """Last-resort definitive verdict when no AI signal decided at all.
+def _resolve_ai(result: dict, headline, article) -> tuple[dict | None, dict | None]:
+    """Resolve THE AI verdict, trying every provider in order.
 
-    Mirrors /api/verify behaviour: forced REAL/FAKE, confidence capped low,
-    so the Analyze page never presents UNVERIFIED as the answer.
+    Order: Gemini FINAL engine -> Gemini live check -> OpenAI (ChatGPT) ->
+    local Ollama. Returns ``(ai_verdict, live_check)`` where ``ai_verdict`` is
+    ``None`` when no AI provider could decide (the caller then returns an error).
     """
-    verification = body.get("verification") or {}
-    overall = verification.get("overall") or {}
-    prediction = str(body.get("prediction") or "").upper()
-    overall_verdict = str(overall.get("verdict") or "").upper()
-    if overall_verdict in ("REAL", "FALSE", "FAKE"):
-        label = "REAL" if overall_verdict == "REAL" else "FALSE"
-        conf = max(0.0, min(0.55, float(overall.get("confidence") or 0.0)))
-        reasoning = overall.get("explanation") or ""
-    elif prediction in ("REAL", "FALSE", "FAKE"):
-        label = "FALSE" if prediction == "FAKE" else prediction
-        conf = 0.35
-        reasoning = (
-            "No AI verdict was reachable; the neural network was the only "
-            "usable signal, applied with low confidence."
-        )
-    else:
-        label = "REAL"
-        conf = 0.30
-        reasoning = "No decisive signal was available; labelled with minimal confidence."
-    verdict = {
-        "verdict": "FAKE" if label == "FALSE" else "REAL",
-        "confidence": round(conf, 2),
-        "source": "rule-engine",
-    }
-    _apply_ai_final(body, verdict)
-    return verdict
+    ai_verdict = _engine_ai_verdict(result.get("verification"))
+    if ai_verdict:
+        return ai_verdict, None
 
-
-def _ai_verdict(live_check: dict | None, verification: dict | None) -> dict | None:
-    """Build the article-level AI verdict: the FINAL engine decision comes
-    first, then Gemini's live check, then the evidence-driven overall verdict.
-    The AI verdict is the one shown as the final answer."""
-
-    if verification:
-        gemini_validation = verification.get("gemini_validation")
-        if gemini_validation and gemini_validation.get("label"):
-            return {
-                "verdict": gemini_validation["label"],
-                "confidence": gemini_validation.get("confidence", 0.5),
-                "reasoning": gemini_validation.get("reasoning", ""),
-                "source": "gemini",
-            }
-    if live_check and live_check.get("label"):
+    live_check = _live_check(headline, article)
+    if live_check and live_check.get("label") in ("REAL", "FAKE"):
         return {
             "verdict": live_check["label"],
             "confidence": live_check.get("confidence", 0.5),
             "reasoning": live_check.get("reasoning", ""),
             "source": "gemini",
-        }
-    if verification and verification.get("overall"):
-        overall = verification["overall"]
-        verdict = overall.get("verdict")
-        if verdict in ("REAL", "FALSE", "UNVERIFIED"):
-            return {
-                "verdict": "FAKE" if verdict == "FALSE" else verdict,
-                "confidence": overall.get("confidence", 0.5),
-                "reasoning": overall.get("explanation", ""),
-                "source": "evidence+ai",
-            }
-    return None
+        }, live_check
+
+    ai_verdict = _openai_verdict(result, headline, article)
+    if ai_verdict:
+        return ai_verdict, live_check
+
+    ai_verdict = _ollama_verdict(result, headline, article)
+    return ai_verdict, live_check
 
 
 @bp.post("/analyze")
@@ -158,18 +138,11 @@ def analyze_article():
     debug = (request.args.get("debug") or "").strip().lower() in {"1", "true", "yes", "on"}
     result = analyze(headline, article, save=save, include_debug=debug)
 
-    ai_verdict = _engine_ai_verdict(result.get("verification"))
-    live_check = None
+    ai_verdict, live_check = _resolve_ai(result, headline, article)
     if ai_verdict is None:
-        # Engine gave no verdict - Gemini's live check can still decide.
-        live_check = _live_check(headline, article)
-        ai_verdict = _ai_verdict(live_check, result.get("verification"))
-        if ai_verdict is None or ai_verdict.get("verdict") not in ("REAL", "FAKE"):
-            ai_verdict = _openai_verdict(result, headline, article)
-        if ai_verdict is None or ai_verdict.get("verdict") not in ("REAL", "FAKE"):
-            ai_verdict = _force_rule_engine(result)
-        _apply_ai_final(result, ai_verdict)
-
+        return jsonify({"error": AI_UNAVAILABLE_MESSAGE,
+                        "status": "ai_unavailable"}), 503
+    _apply_ai_final(result, ai_verdict)
     result["live_check"] = live_check
     result["ai_verdict"] = ai_verdict
     return jsonify(result)
@@ -184,17 +157,11 @@ def analyze_headline():
     debug = (request.args.get("debug") or "").strip().lower() in {"1", "true", "yes", "on"}
     result = analyze_headline_only(headline, include_debug=debug)
 
-    ai_verdict = _engine_ai_verdict(result.get("verification"))
-    live_check = None
+    ai_verdict, live_check = _resolve_ai(result, headline, None)
     if ai_verdict is None:
-        live_check = _live_check(headline, None)
-        ai_verdict = _ai_verdict(live_check, result.get("verification"))
-        if ai_verdict is None or ai_verdict.get("verdict") not in ("REAL", "FAKE"):
-            ai_verdict = _openai_verdict(result, headline, None)
-        if ai_verdict is None or ai_verdict.get("verdict") not in ("REAL", "FAKE"):
-            ai_verdict = _force_rule_engine(result)
-        _apply_ai_final(result, ai_verdict)
-
+        return jsonify({"error": AI_UNAVAILABLE_MESSAGE,
+                        "status": "ai_unavailable"}), 503
+    _apply_ai_final(result, ai_verdict)
     result["live_check"] = live_check
     result["ai_verdict"] = ai_verdict
     return jsonify(result)

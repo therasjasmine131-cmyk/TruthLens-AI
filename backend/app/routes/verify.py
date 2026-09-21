@@ -45,6 +45,12 @@ _VERDICT_MAP = {
 
 MAX_TEXT_CHARS = 30000
 
+AI_UNAVAILABLE_MESSAGE = (
+    "AI verification is temporarily unavailable: every AI provider "
+    "(Gemini, ChatGPT and the local model) is rate-limited, out of quota or "
+    "unreachable. Please try again in a few minutes."
+)
+
 
 def _gemini_basis(gemini_validation: dict | None, live: dict | None) -> tuple[str | None, bool]:
     """Resolve THE Gemini verdict: FINAL engine first, live check second.
@@ -86,24 +92,20 @@ def _evidence_digest(verification: dict | None, max_chars: int = 6000) -> str:
 
 
 def _rule_engine_basis(verification: dict | None) -> tuple[str, float, str, str]:
-    """Last-resort evidence-rule verdict, forced REAL/FAKE, confidence capped low.
+    """Deprecated: retained only for callers/tests that still import it.
 
-    Returns ``(label, confidence_0_1, reasoning, note)``.
+    The API no longer fabricates a verdict when no AI is available - it returns
+    an ``ai_unavailable`` error instead. This helper still produces a
+    definitive low-confidence label for internal/offline use.
     """
     overall = (verification or {}).get("overall") or {}
-    ml = (verification or {}).get("ml_article") or {}
     overall_verdict = str(overall.get("verdict") or "").upper()
     if overall_verdict in ("REAL", "FALSE", "FAKE"):
         label = "REAL" if overall_verdict == "REAL" else "FALSE"
         conf = max(0.0, min(0.55, float(overall.get("confidence") or 0.0)))
     else:
-        prediction = str(ml.get("prediction") or "").upper()
-        if prediction in ("REAL", "FALSE"):
-            label = prediction
-            conf = 0.35
-        else:
-            label = "REAL"
-            conf = 0.30
+        label = "REAL"
+        conf = 0.30
     reasoning = str(overall.get("explanation") or (
         f"Evidence rules could not reach a strong verdict; "
         f"labelled {label} with low confidence."))
@@ -186,12 +188,12 @@ def verify():
                         verdict, confidence_value)
 
     if verdict is None:
-        # Tier 4: rule engine, forced REAL/FAKE, confidence capped low.
-        verdict, confidence_value, reasoning_value, fallback_note = \
-            _rule_engine_basis(verification)
-        source = "rule-engine"
-        logger.warning("[API] Rule-engine fallback verdict: %s confidence=%s",
-                       verdict, confidence_value)
+        # No AI provider could decide: return an error instead of inventing one.
+        logger.warning("[API] No AI provider available - returning ai_unavailable")
+        return jsonify({
+            "status": "ai_unavailable",
+            "error": AI_UNAVAILABLE_MESSAGE,
+        }), 503
 
     if source is None:
         if from_engine:
@@ -227,10 +229,6 @@ def verify():
             "OpenAI (ChatGPT) decided TRUE or FALSE from the gathered evidence "
             "because Gemini was unavailable. The local trained network's signal "
             "is only a suggestion shown next to the verdict."
-        ),
-        "rule-engine": (
-            "Rule-engine result used because Gemini, OpenAI and Ollama were all "
-            "unavailable; confidence is capped low."
         ),
     }
 

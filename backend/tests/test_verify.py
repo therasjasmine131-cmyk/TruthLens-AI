@@ -132,34 +132,29 @@ def test_ollama_fallback_judges_evidence(verify_client):
     assert body["fallback_note"]
 
 
-def test_rule_engine_last_resort(verify_client):
-    """Neither Gemini nor Ollama available: rule-engine result forced to
-    REAL/FAKE with confidence capped low - still never a 502."""
-    client = verify_client(live=None, verdict="UNVERIFIED", ollama=None)
+def test_no_ai_provider_returns_error(verify_client):
+    """Neither Gemini, OpenAI nor Ollama available: the API returns an explicit
+    ai_unavailable error instead of fabricating a verdict."""
+    client = verify_client(live=None, verdict="UNVERIFIED", ollama=None, openai=None)
     resp = _post(client, headline="Something nobody can confirm yet.")
-    assert resp.status_code == 200
+    assert resp.status_code == 503
     body = resp.get_json()
-    assert body["final_verdict"] in {"TRUE", "FALSE"}
-    assert body["verdict_source"] == "rule-engine"
-    assert body["confidence"] <= 0.55
-    assert body["fallback_note"]
+    assert body["status"] == "ai_unavailable"
+    assert "unavailable" in body["error"].lower()
 
 
-def test_rule_engine_forces_false_from_overall(verify_client):
-    """When the evidence rules reached FALSE, the rule-engine last resort
-    keeps that polarity (never silently flips to TRUE or UNVERIFIED)."""
+def test_no_ai_provider_error_even_with_false_evidence(verify_client):
+    """Even when the evidence rules lean FALSE, no AI available means an error -
+    the API never presents an evidence-only guess as the AI verdict."""
     client = verify_client(
         live=None, verdict="FALSE", sources=("factcheck", "newsapi"),
-        ollama=None,
+        ollama=None, openai=None,
         evidence=[{"title": "Fabrication exposed", "relation": "CONTRADICT",
                    "source_name": "factcheck.org", "url": "https://f.example"}],
     )
     resp = _post(client, headline="A clearly fabricated report.")
-    body = resp.get_json()
-    assert body["final_verdict"] == "FALSE"
-    assert body["verdict_source"] == "rule-engine"
-    assert body["confidence"] == 0.55
-    assert body["reasoning"] == "reasoning from test"
+    assert resp.status_code == 503
+    assert resp.get_json()["status"] == "ai_unavailable"
 
 
 def test_gemini_final_validation_resolves_when_no_live(verify_client):
@@ -215,17 +210,15 @@ def test_live_check_decides_when_engine_unavailable(verify_client):
 
 
 def test_missing_gemini_never_invents_sources(verify_client):
-    """The no-fabrication guarantee still holds for Gemini: when Gemini is the
-    decision path it either produced a verdict or it did not. When it did not,
-    the Ollama/rule-engine fallback decides - nothing is invented."""
-    client = verify_client(live=None, verdict="UNVERIFIED", ollama=None)
+    """The no-fabrication guarantee: when no AI provider produced a verdict the
+    API reports ai_unavailable rather than inventing sources or a verdict."""
+    client = verify_client(live=None, verdict="UNVERIFIED", ollama=None, openai=None)
     resp = _post(client, headline="No known reporting about this claim.",
                  article="This is a completely invented claim text.")
-    assert resp.status_code == 200
+    assert resp.status_code == 503
     body = resp.get_json()
-    assert body["gemini_validation"] is None
-    assert body["verdict_source"] in {"ollama", "rule-engine"}
-    assert body["final_verdict"] in {"TRUE", "FALSE"}
+    assert body["status"] == "ai_unavailable"
+    assert "final_verdict" not in body
 
 
 def test_invalid_language_rejected():
@@ -269,8 +262,8 @@ def test_english_language_mode_honoured(verify_client, monkeypatch):
 
 
 def test_full_pipeline_offline_no_key():
-    """End-to-end fully offline: no Gemini key and no Ollama means the
-    rule-engine last resort answers TRUE/FALSE - a decision, not a 502."""
+    """End-to-end fully offline: with no AI provider reachable the endpoint
+    returns an explicit ai_unavailable error - it never fabricates a verdict."""
     from app import create_app
     from app.config import TestConfig
     import app.routes.verify as verify_mod
@@ -278,18 +271,20 @@ def test_full_pipeline_offline_no_key():
     monkeypatch_os = pytest.MonkeyPatch()
     monkeypatch_os.setenv("TRUTHLENS_LIVE_EVIDENCE", "0")
     monkeypatch_os.setenv("GEMINI_API_KEY", "")
+    monkeypatch_os.setenv("OPENAI_API_KEY", "")
     monkeypatch_os.setenv("BAZAARLINK_API_KEY", "")
     try:
         with create_app(TestConfig).test_client() as client:
             monkeypatch_os.setattr(verify_mod, "ollama_judge", lambda *a, **k: None)
+            monkeypatch_os.setattr(verify_mod, "openai_judge", lambda *a, **k: None)
             resp = _post(client, headline="The Earth revolves around the Sun.",
                          article="Astronomers say the planet orbits the star.")
-            assert resp.status_code == 200
+            assert resp.status_code == 503
             body = resp.get_json()
-            assert body["final_verdict"] in {"TRUE", "FALSE"}
-            assert body["verdict_source"] == "rule-engine"
-            assert body["final_verdict"] != "UNVERIFIED"
+            assert body["status"] == "ai_unavailable"
+            assert "unavailable" in body["error"].lower()
     finally:
         monkeypatch_os.undo()
-        for name in ("TRUTHLENS_LIVE_EVIDENCE", "GEMINI_API_KEY", "BAZAARLINK_API_KEY"):
+        for name in ("TRUTHLENS_LIVE_EVIDENCE", "GEMINI_API_KEY",
+                     "OPENAI_API_KEY", "BAZAARLINK_API_KEY"):
             os.environ.pop(name, None)
