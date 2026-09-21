@@ -209,8 +209,12 @@ def _finalize_claim(claim: dict, evidence_result: dict, ai1: dict | None,
 
 
 def _run_ai_stages(claims: list[dict], evidence_results: list[dict],
-                   language: dict) -> tuple[dict, dict]:
-    """Run AI analysis #1 + review #2 for a bounded set of claims, in parallel."""
+                   language: dict, full_context: str) -> tuple[dict, dict]:
+    """Run AI analysis #1 + review #2 for a bounded set of claims, in parallel.
+
+    Every claim is judged with the FULL article context (HEADLINE + ARTICLE +
+    LANGUAGE) injected into the prompt, so claims are not read in isolation.
+    """
     ai1_by_idx: dict[int, dict] = {}
     ai2_by_idx: dict[int, dict] = {}
     if not ai_stage.available():
@@ -222,8 +226,11 @@ def _run_ai_stages(claims: list[dict], evidence_results: list[dict],
     def _job(idx: int):
         claim = claims[idx]
         classified = evidence_results[idx]["classified"]
-        ai1 = ai_stage.analyze_claim_ai(claim["text"], classified, lang_code)
-        ai2 = ai_stage.review_claim_ai(claim["text"], classified, ai1, lang_code) if ai1 else None
+        ai1 = ai_stage.analyze_claim_ai(
+            claim["text"], classified, lang_code, article=full_context)
+        ai2 = ai_stage.review_claim_ai(
+            claim["text"], classified, ai1, lang_code, article=full_context) \
+            if ai1 else None
         return idx, ai1, ai2
 
     try:
@@ -254,7 +261,7 @@ def verify_text(text: str | None, headline: str | None = None,
         claim["_ml"] = ml
         evidence_results.append(_evidence_signal(claim, ml))
 
-    ai1_by_idx, ai2_by_idx = _run_ai_stages(claims, evidence_results, lang)
+    ai1_by_idx, ai2_by_idx = _run_ai_stages(claims, evidence_results, lang, full_text)
 
     claim_results = []
     for i, claim in enumerate(claims):

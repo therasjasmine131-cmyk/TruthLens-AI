@@ -50,7 +50,8 @@ _SYSTEM_ANALYZE = (
 )
 
 _USER_ANALYZE = (
-    "Claim (language: {language}):\n{claim}\n\n"
+    "Article context (language: {language}):\n{article_context}\n\n"
+    "Claim to verify:\n{claim}\n\n"
     "Retrieved evidence:\n{evidence}\n\n"
     'Respond with STRICT JSON only, no markdown:\n'
     '{{"decision": "SUPPORT or CONTRADICT or INSUFFICIENT", '
@@ -82,7 +83,8 @@ _SYSTEM_REVIEW = (
 )
 
 _USER_REVIEW = (
-    "Claim (language: {language}):\n{claim}\n\n"
+    "Article context (language: {language}):\n{article_context}\n\n"
+    "Claim under review:\n{claim}\n\n"
     "Retrieved evidence:\n{evidence}\n\n"
     "AI #1 analysis:\n{ai1}\n\n"
     'Respond with STRICT JSON only, no markdown:\n'
@@ -360,20 +362,23 @@ def _problems_from(text: str) -> list[str]:
 # Public API — AI #1 (Gemini) + AI #2 (BazaarLink)
 # ---------------------------------------------------------------------------
 
-def analyze_claim_ai(claim: str, evidence: list[dict], language: str) -> dict | None:
-    """AI analysis #1 (Gemini) for one atomic claim. Returns a dict or None."""
+def analyze_claim_ai(claim: str, evidence: list[dict], language: str,
+                     article: str | None = None) -> dict | None:
+    """AI analysis #1 (Gemini) for one atomic claim, grounded on the full
+    article context (HEADLINE + ARTICLE + LANGUAGE). Returns a dict or None."""
     ctx = build_evidence_context(evidence)
-    key = _cache_key("ai1", claim, ctx)
+    key = _cache_key("ai1", claim, ctx, article or "")
     if key in _CACHE:
         return _CACHE[key]
-    result = _run_analyze(claim, ctx, language)
+    result = _run_analyze(claim, ctx, language, article)
     _CACHE[key] = result
     return result
 
 
-def _run_analyze(claim: str, ctx: str, language: str) -> dict | None:
+def _run_analyze(claim: str, ctx: str, language: str, article: str | None) -> dict | None:
     user = _USER_ANALYZE.format(
         language=language or "english",
+        article_context=(article or "").strip()[:2500] or "(only the claim below was provided)",
         claim=claim[:1200],
         evidence=ctx or "(no evidence retrieved)",
     )
@@ -398,19 +403,21 @@ def _run_analyze(claim: str, ctx: str, language: str) -> dict | None:
 
 
 def review_claim_ai(claim: str, evidence: list[dict], ai1: dict,
-                    language: str) -> dict | None:
-    """AI analysis #2 (BazaarLink): adversarial review of AI #1."""
+                    language: str, article: str | None = None) -> dict | None:
+    """AI analysis #2 (BazaarLink): adversarial review of AI #1, grounded on
+    the full article context."""
     ctx = build_evidence_context(evidence)
-    key = _cache_key("ai2", claim, ctx,
+    key = _cache_key("ai2", claim, ctx, article or "",
                      json.dumps(ai1, sort_keys=True, default=str))
     if key in _CACHE:
         return _CACHE[key]
-    result = _run_review(claim, ctx, ai1, language)
+    result = _run_review(claim, ctx, ai1, language, article)
     _CACHE[key] = result
     return result
 
 
-def _run_review(claim: str, ctx: str, ai1: dict, language: str) -> dict | None:
+def _run_review(claim: str, ctx: str, ai1: dict, language: str,
+                article: str | None) -> dict | None:
     ai1_txt = (
         f"Decision: {ai1.get('decision', 'n/a')}, "
         f"confidence {ai1.get('confidence', 'n/a')}. "
@@ -418,6 +425,7 @@ def _run_review(claim: str, ctx: str, ai1: dict, language: str) -> dict | None:
     )
     user = _USER_REVIEW.format(
         language=language or "english",
+        article_context=(article or "").strip()[:2500] or "(only the claim below was provided)",
         claim=claim[:1200],
         evidence=ctx or "(no evidence retrieved)",
         ai1=ai1_txt[:800],

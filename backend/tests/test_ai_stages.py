@@ -199,6 +199,36 @@ def test_analyze_claim_ai_accepts_plural_verdicts(monkeypatch):
     assert result["decision"] == "SUPPORT"
 
 
+def test_analyze_claim_ai_injects_full_article_context(monkeypatch):
+    captured = {}
+    def _fake(system, user, temperature=0.1):
+        captured["user"] = user
+        return {"decision": "CONTRADICT", "confidence": 0.8, "reasoning": "x"}
+    monkeypatch.setattr(ai_stage, "_call_gemini", _fake)
+    article = "HEADLINE: Fires near the coast\nARTICLE: A large blaze broke out overnight."
+    ai_stage.analyze_claim_ai("A large blaze broke out", [_ev("CONTRADICTS")],
+                              "english", article=article)
+    assert "Article context" in captured["user"]
+    assert "HEADLINE: Fires near the coast" in captured["user"]
+    assert "Claim to verify" in captured["user"]
+
+
+def test_review_claim_ai_injects_full_article_context(monkeypatch):
+    captured = {}
+    def _fake(system, user, temperature=0.1):
+        captured["user"] = user
+        return {"verdict": "CONTRADICT", "confidence": 0.8,
+                "agrees_with_first": False, "problems": [], "reasoning": "x"}
+    monkeypatch.setattr(ai_stage, "_call_bazaarlink", _fake)
+    ai1 = _ai1("SUPPORT")
+    article = "HEADLINE: Fires near the coast\nARTICLE: A large blaze broke out overnight."
+    ai_stage.review_claim_ai("A large blaze broke out", [_ev("CONTRADICTS")],
+                             ai1, "english", article=article)
+    assert "Article context" in captured["user"]
+    assert "HEADLINE: Fires near the coast" in captured["user"]
+    assert "Claim under review" in captured["user"]
+
+
 def test_review_claim_ai_builds_record(monkeypatch):
     monkeypatch.setattr(ai_stage, "_call_bazaarlink", lambda system, user, temperature=0.1: {
         "verdict": "support", "confidence": 0.8, "agrees_with_first": True,
@@ -293,9 +323,9 @@ def test_verify_text_records_ai_stages(monkeypatch):
 
     monkeypatch.setattr(ver.ai_stage, "available", lambda: True)
     monkeypatch.setattr(ver.ai_stage, "analyze_claim_ai",
-                        lambda claim, evidence, lang: _ai1("SUPPORT", 0.9))
+                        lambda claim, evidence, lang, article=None: _ai1("SUPPORT", 0.9))
     monkeypatch.setattr(ver.ai_stage, "review_claim_ai",
-                        lambda claim, evidence, ai1, lang: _ai2("SUPPORT", 0.85))
+                        lambda claim, evidence, ai1, lang, article=None: _ai2("SUPPORT", 0.85))
 
     report = ver.verify_text("The Earth revolves around the Sun.")
     claim = report["claims"][0]
@@ -313,9 +343,9 @@ def test_verify_text_debug_stages_filled(monkeypatch):
 
     monkeypatch.setattr(ver.ai_stage, "available", lambda: True)
     monkeypatch.setattr(ver.ai_stage, "analyze_claim_ai",
-                        lambda claim, evidence, lang: _ai1("SUPPORT", 0.9))
+                        lambda claim, evidence, lang, article=None: _ai1("SUPPORT", 0.9))
     monkeypatch.setattr(ver.ai_stage, "review_claim_ai",
-                        lambda claim, evidence, ai1, lang: _ai2("SUPPORT", 0.85))
+                        lambda claim, evidence, ai1, lang, article=None: _ai2("SUPPORT", 0.85))
 
     report = ver.verify_text("The Earth revolves around the Sun.", include_debug=True)
     assert report["stages"] is not None
@@ -342,9 +372,9 @@ def test_verify_text_adds_gemini_final_validation(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(ver.ai_stage, "available", lambda: True)
     monkeypatch.setattr(ver.ai_stage, "analyze_claim_ai",
-                        lambda claim, evidence, lang: _ai1("SUPPORT", 0.9))
+                        lambda claim, evidence, lang, article=None: _ai1("SUPPORT", 0.9))
     monkeypatch.setattr(ver.ai_stage, "review_claim_ai",
-                        lambda claim, evidence, ai1, lang: _ai2("SUPPORT", 0.85))
+                        lambda claim, evidence, ai1, lang, article=None: _ai2("SUPPORT", 0.85))
     monkeypatch.setattr(ver.ai_stage, "final_validation",
                         lambda article, overall, claims, language="english": {
                             "available": True, "source": "gemini", "model": "m",
