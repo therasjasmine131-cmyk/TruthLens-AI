@@ -49,6 +49,38 @@ def _model_info() -> dict:
     }
 
 
+def _apply_engine_final(verification: dict | None) -> str | None:
+    """Make the FINAL engine's (Gemini) verdict the answer EVERYWHERE.
+
+    The evidence pipeline's own readings stay visible per-source in the
+    evidence matrix, but every "verdict" surface (overall, claims) is set to
+    the AI verdict so the report never shows UNVERIFIED/FALSE as the answer
+    when the AI already decided. Only runs when a Gemini verdict exists.
+    """
+    if not verification:
+        return None
+    gv = verification.get("gemini_validation")
+    if not (gv and gv.get("label")):
+        return None
+    label = "REAL" if gv["label"] == "REAL" else "FALSE"
+    confidence = gv.get("confidence", 0.5)
+    reasoning = gv.get("reasoning", "") or ""
+    overall = verification.get("overall")
+    if overall:
+        overall["verdict"] = label
+        overall["confidence"] = confidence
+        overall["explanation"] = reasoning or overall.get("explanation", "")
+        overall["mixed"] = False
+    for claim in verification.get("claims", []) or []:
+        claim["verdict"] = label
+        claim["final_verdict"] = label
+        claim["final_authority"] = "gemini (AI)"
+        claim["final_confidence"] = confidence
+    for item in verification.get("evidence_matrix", []) or []:
+        item["claim_verdict"] = label
+    return label
+
+
 def analyze(headline: str | None, article: str | None, *, save: bool = True,
             include_debug: bool = False) -> dict:
     """Run the full analysis pipeline and return a JSON-safe result."""
@@ -90,6 +122,7 @@ def analyze(headline: str | None, article: str | None, *, save: bool = True,
         level = _HEADLINE_ONLY_CAP
 
     verification = run_verification(headline, article, include_debug=include_debug)
+    _apply_engine_final(verification)
     overall_verdict = None
     no_evidence_overall = None
     if verification:

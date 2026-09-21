@@ -17,6 +17,49 @@ def _live_check(headline, article):
     return live_news_check(headline, article)
 
 
+def _engine_ai_verdict(verification: dict | None) -> dict | None:
+    """The FINAL engine (Gemini) verdict when it exists."""
+    if not verification:
+        return None
+    gemini_validation = verification.get("gemini_validation")
+    if gemini_validation and gemini_validation.get("label"):
+        return {
+            "verdict": gemini_validation["label"],
+            "confidence": gemini_validation.get("confidence", 0.5),
+            "reasoning": gemini_validation.get("reasoning", ""),
+            "source": "gemini",
+        }
+    return None
+
+
+def _apply_ai_final(body: dict, ai_verdict: dict | None) -> None:
+    """Normalize every verdict surface to the AI verdict (live-check path)."""
+    verdict = (ai_verdict or {}).get("verdict")
+    if verdict not in ("REAL", "FAKE"):
+        return
+    label = "REAL" if verdict == "REAL" else "FALSE"
+    body["verdict"] = label
+    body["verdict_inference_only"] = False
+    verification = body.get("verification")
+    if not verification:
+        return
+    confidence = ai_verdict.get("confidence", 0.5)
+    reasoning = ai_verdict.get("reasoning", "") or ""
+    overall = verification.get("overall")
+    if overall:
+        overall["verdict"] = label
+        overall["confidence"] = confidence
+        overall["explanation"] = reasoning or overall.get("explanation", "")
+        overall["mixed"] = False
+    for claim in verification.get("claims", []) or []:
+        claim["verdict"] = label
+        claim["final_verdict"] = label
+        claim["final_authority"] = "gemini (AI) - live check"
+        claim["final_confidence"] = confidence
+    for item in verification.get("evidence_matrix", []) or []:
+        item["claim_verdict"] = label
+
+
 def _ai_verdict(live_check: dict | None, verification: dict | None) -> dict | None:
     """Build the article-level AI verdict: the FINAL engine decision comes
     first, then Gemini's live check, then the evidence-driven overall verdict.
@@ -59,9 +102,17 @@ def analyze_article():
     save = bool(data.get("save", True))
     debug = (request.args.get("debug") or "").strip().lower() in {"1", "true", "yes", "on"}
     result = analyze(headline, article, save=save, include_debug=debug)
-    live_check = _live_check(headline, article)
+
+    ai_verdict = _engine_ai_verdict(result.get("verification"))
+    live_check = None
+    if ai_verdict is None:
+        # Engine gave no verdict - Gemini's live check can still decide.
+        live_check = _live_check(headline, article)
+        ai_verdict = _ai_verdict(live_check, result.get("verification"))
+        _apply_ai_final(result, ai_verdict)
+
     result["live_check"] = live_check
-    result["ai_verdict"] = _ai_verdict(live_check, result.get("verification"))
+    result["ai_verdict"] = ai_verdict
     return jsonify(result)
 
 
@@ -73,7 +124,14 @@ def analyze_headline():
         return jsonify({"error": "A headline is required.", "status": "error"}), 400
     debug = (request.args.get("debug") or "").strip().lower() in {"1", "true", "yes", "on"}
     result = analyze_headline_only(headline, include_debug=debug)
-    live_check = _live_check(headline, None)
+
+    ai_verdict = _engine_ai_verdict(result.get("verification"))
+    live_check = None
+    if ai_verdict is None:
+        live_check = _live_check(headline, None)
+        ai_verdict = _ai_verdict(live_check, result.get("verification"))
+        _apply_ai_final(result, ai_verdict)
+
     result["live_check"] = live_check
-    result["ai_verdict"] = _ai_verdict(live_check, result.get("verification"))
+    result["ai_verdict"] = ai_verdict
     return jsonify(result)

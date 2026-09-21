@@ -340,7 +340,7 @@ export function VerificationSection({ verification }: { verification: Verificati
         <div className="border-b border-slate-100 px-5 pt-4 dark:border-slate-800">
           <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Evidence Assessment</h3>
           <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-            Secondary signal from retrieved sources — the AI verdict decides the final answer.
+            Shows the AI verdict answer — retrieved-source details support it below.
           </p>
         </div>
         <div className="flex flex-col items-center gap-4 p-6 text-center sm:flex-row sm:text-left">
