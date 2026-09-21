@@ -252,68 +252,123 @@ def test_build_evidence_context_includes_relations():
     assert "a.org" in ctx
 
 
-# --- final validation (Gemini) ---------------------------------------------
+# --- FINAL verification engine (Gemini) -------------------------------------
 
 def _overall(verdict="REAL", confidence=0.9):
     return {"verdict": verdict, "confidence": confidence,
             "explanation": "Evidence supports it."}
 
 
-def test_final_validation_builds_record(monkeypatch):
-    monkeypatch.setattr(ai_stage, "_call_gemini", lambda s, u, temperature=0.1: {
-        "label": "REAL", "confidence": 0.93, "agrees": True,
-        "reasoning": "Independent reporting and official records confirm the claim.",
-    })
-    result = ai_stage.final_validation(
-        "The Earth revolves around the Sun.", _overall("REAL"),
-        [{"text": "The Earth revolves around the Sun.", "verdict": "REAL",
-          "confidence": 0.9, "final_authority": "evidence"}], "english",
+def _engine_inputs():
+    return dict(
+        headline="Government announces new tax rebate",
+        article="The finance ministry announced the new rebate on Monday.",
+        language="english",
+        initial_verdict="FAKE",
+        initial_confidence=0.83,
+        initial_reasoning="Local BiGRU stylistic signal.",
+        search_results=[{
+            "title": "Ministry announces tax rebate",
+            "url": "https://example.gov/new-rebate",
+            "source": "Government Portal",
+            "source_tier": "official",
+            "date": "2026-09-20",
+            "relation": "SUPPORTS",
+            "snippet": "The finance ministry announced the rebate.",
+        }],
+        provisional=_overall("REAL"),
     )
+
+
+def test_final_engine_builds_record(monkeypatch):
+    ai_stage._CACHE.clear()
+    monkeypatch.setattr(ai_stage, "_call_gemini", lambda s, u, temperature=0.1: {
+        "verdict": "REAL", "confidence": 95,
+        "reasoning": "Official announcement confirms the rebate.",
+        "sources_checked": [{
+            "title": "Ministry announces tax rebate",
+            "url": "https://example.gov/new-rebate",
+            "source_type": "official",
+            "published_date": "2026-09-20",
+            "supports_claim": True,
+        }],
+        "key_claims_verified": [{
+            "claim": "New tax rebate announced on Monday",
+            "status": "SUPPORTED",
+            "evidence_strength": "HIGH",
+        }],
+    })
+    result = ai_stage.final_verdict_engine(**_engine_inputs())
     assert result is not None
     assert result["available"] is True
     assert result["source"] == "gemini"
-    assert result["label"] == "REAL"
-    assert result["confidence"] == pytest.approx(0.93, abs=0.001)
-    assert result["agrees"] is True
-    assert "official records" in result["reasoning"]
+    assert result["verdict"] == "REAL"
+    assert result["confidence"] == 95
+    assert result["initial_model_was_correct"] is False
+    assert result["sources_checked"][0]["url"] == "https://example.gov/new-rebate"
+    assert result["key_claims_verified"][0]["status"] == "SUPPORTED"
 
 
-def test_final_validation_normalizes_labels(monkeypatch):
-    calls = {"n": 0}
-
-    def _fake(system, user, temperature=0.1):
-        calls["n"] += 1
-        return {"label": "FAKE", "confidence": 0.8, "agrees": True, "reasoning": "wrong"}
-
-    monkeypatch.setattr(ai_stage, "_call_gemini", _fake)
-    result = ai_stage.final_validation("Vaccines cause autism.", _overall("FALSE"), [], "english")
-    assert result["label"] == "FALSE"
-    monkeypatch.setattr(ai_stage, "_call_gemini",
-                        lambda s, u, temperature=0.1: {"label": "TRUE", "confidence": 0.7,
-                                                       "agrees": False, "reasoning": "ok"})
-    result = ai_stage.final_validation("A", _overall("UNVERIFIED"), [], "english")
-    assert result["label"] == "REAL"
-    assert result["agrees"] is False
-
-
-def test_final_validation_infers_agreement_when_missing(monkeypatch):
+def test_final_engine_never_returns_unverified(monkeypatch):
+    ai_stage._CACHE.clear()
     monkeypatch.setattr(ai_stage, "_call_gemini", lambda s, u, temperature=0.1: {
-        "label": "UNVERIFIED", "confidence": 0.4, "reasoning": "no evidence",
+        "verdict": "UNVERIFIED", "confidence": 30, "reasoning": "cannot tell",
     })
-    result = ai_stage.final_validation("Something obscure.", _overall("UNVERIFIED"), [], "english")
-    assert result["agrees"] is True
+    assert ai_stage.final_verdict_engine(**_engine_inputs()) is None
 
 
-def test_final_validation_unavailable_is_none(monkeypatch):
+def test_final_engine_rejects_invalid_verdict(monkeypatch):
+    ai_stage._CACHE.clear()
+    monkeypatch.setattr(ai_stage, "_call_gemini", lambda s, u, temperature=0.1: {
+        "verdict": "MAYBE", "confidence": 50, "reasoning": "x",
+    })
+    assert ai_stage.final_verdict_engine(**_engine_inputs()) is None
+
+
+def test_final_engine_sanitizes_fabricated_sources(monkeypatch):
+    ai_stage._CACHE.clear()
+    monkeypatch.setattr(ai_stage, "_call_gemini", lambda s, u, temperature=0.1: {
+        "verdict": "FAKE", "confidence": 88, "reasoning": "contradicted",
+        "sources_checked": [
+            {"title": "Real source", "url": "https://example.gov/new-rebate",
+             "supports_claim": False},
+            {"title": "Invented source", "url": "https://totally-made-up.example/x",
+             "supports_claim": True},
+        ],
+    })
+    result = ai_stage.final_verdict_engine(**_engine_inputs())
+    urls = [s["url"] for s in result["sources_checked"]]
+    assert urls == ["https://example.gov/new-rebate"]
+    assert result["verdict"] == "FALSE"
+
+
+def test_final_engine_infers_correctness_when_missing(monkeypatch):
+    ai_stage._CACHE.clear()
+    monkeypatch.setattr(ai_stage, "_call_gemini", lambda s, u, temperature=0.1: {
+        "verdict": "REAL", "confidence": 90, "reasoning": "matches official filing",
+    })
+    inputs = _engine_inputs()
+    inputs["initial_verdict"] = "REAL"
+    result = ai_stage.final_verdict_engine(**inputs)
+    assert result["initial_model_was_correct"] is True
+
+
+def test_final_engine_formats_search_results_never_empty():
+    text = ai_stage.format_search_results([])
+    assert "no search results" in text
+    text = ai_stage.format_search_results([{
+        "title": "T", "url": "https://x.example/1", "source": "S",
+        "source_tier": "news", "date": "2026-01-01", "relation": "SUPPORTS",
+        "snippet": "hi",
+    }])
+    assert "https://x.example/1" in text
+    assert "[SUPPORTS]" in text
+
+
+def test_final_engine_unavailable_is_none(monkeypatch):
+    ai_stage._CACHE.clear()
     monkeypatch.setattr(ai_stage, "_call_gemini", lambda s, u, temperature=0.1: None)
-    assert ai_stage.final_validation("Any text.", _overall(), []) is None
-
-
-def test_final_validation_invalid_label_is_none(monkeypatch):
-    monkeypatch.setattr(ai_stage, "_call_gemini", lambda s, u, temperature=0.1: {
-        "label": "MAYBE", "confidence": 0.5, "reasoning": "x",
-    })
-    assert ai_stage.final_validation("Any text.", _overall(), []) is None
+    assert ai_stage.final_verdict_engine(**_engine_inputs()) is None
 
 
 # --- verifier integration (AI mocked) ---------------------------------------
@@ -375,16 +430,24 @@ def test_verify_text_adds_gemini_final_validation(monkeypatch):
                         lambda claim, evidence, lang, article=None: _ai1("SUPPORT", 0.9))
     monkeypatch.setattr(ver.ai_stage, "review_claim_ai",
                         lambda claim, evidence, ai1, lang, article=None: _ai2("SUPPORT", 0.85))
-    monkeypatch.setattr(ver.ai_stage, "final_validation",
-                        lambda article, overall, claims, language="english": {
+    monkeypatch.setattr(ver.ai_stage, "final_verdict_engine",
+                        lambda headline, article, language, initial_verdict,
+                               initial_confidence, initial_reasoning,
+                               search_results, provisional: {
                             "available": True, "source": "gemini", "model": "m",
-                            "label": "REAL", "confidence": 0.95, "agrees": True,
+                            "verdict": "REAL", "confidence": 95,
+                            "initial_model_verdict": "REAL",
+                            "initial_model_confidence": 0.83,
+                            "initial_model_was_correct": False,
                             "reasoning": "Independent reporting confirms the claim.",
+                            "sources_checked": [],
+                            "key_claims_verified": [],
                         })
 
     report = ver.verify_text("The Earth revolves around the Sun.", include_debug=True)
     assert report["gemini_validation"] is not None
     assert report["gemini_validation"]["label"] == "REAL"
+    assert report["gemini_validation"]["confidence_score"] == 95
     assert report["pipeline"]["gemini_final_validated"] is True
     assert "GEMINI FINAL VALIDATION" in report["stages"]["PIPELINE"]
 
@@ -394,7 +457,7 @@ def test_verify_text_skips_gemini_validation_without_key(monkeypatch):
 
     monkeypatch.setenv("GEMINI_API_KEY", "")
     monkeypatch.setattr(ver.ai_stage, "available", lambda: True)
-    monkeypatch.setattr(ver.ai_stage, "final_validation",
+    monkeypatch.setattr(ver.ai_stage, "final_verdict_engine",
                         lambda *a, **k: {"label": "REAL"})
     report = ver.verify_text("The Earth revolves around the Sun.")
     assert report["gemini_validation"] is None

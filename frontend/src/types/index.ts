@@ -67,6 +67,20 @@ export interface LiveCheck {
   reasoning: string;
 }
 
+export interface GeminiValidationSource {
+  title: string;
+  url: string | null;
+  source_type?: string | null;
+  published_date?: string | null;
+  supports_claim: boolean;
+}
+
+export interface KeyClaimVerified {
+  claim: string;
+  status: "SUPPORTED" | "REFUTED" | "UNRESOLVED";
+  evidence_strength?: "HIGH" | "MEDIUM" | "LOW" | string;
+}
+
 export interface GeminiValidation {
   available: boolean;
   source: string;
@@ -75,6 +89,13 @@ export interface GeminiValidation {
   confidence: number;
   agrees: boolean;
   reasoning: string;
+  verdict?: "REAL" | "FAKE";
+  confidence_score?: number;
+  initial_model_verdict?: "REAL" | "FALSE" | string;
+  initial_model_confidence?: number;
+  initial_model_was_correct?: boolean;
+  sources_checked?: GeminiValidationSource[];
+  key_claims_verified?: KeyClaimVerified[];
 }
 
 export interface AiVerdict {

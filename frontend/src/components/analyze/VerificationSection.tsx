@@ -472,8 +472,27 @@ export function VerificationSection({ verification }: { verification: Verificati
                 Validates {verification.gemini_validation.label === "REAL" ? "REAL" : verification.gemini_validation.label === "FALSE" ? "FAKE" : "UNVERIFIED"}
               </span>
               <p className="text-[11px] text-slate-400 dark:text-slate-500">
-                AI confidence {Math.round(verification.gemini_validation.confidence * 100)}%
+                AI confidence{" "}
+                {verification.gemini_validation.confidence_score != null
+                  ? `${verification.gemini_validation.confidence_score}%`
+                  : `${Math.round(verification.gemini_validation.confidence * 100)}%`}
               </p>
+              {verification.gemini_validation.initial_model_verdict &&
+                verification.gemini_validation.initial_model_verdict !== "n/a" && (
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                      verification.gemini_validation.initial_model_was_correct
+                        ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+                        : "bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300",
+                    )}
+                  >
+                    Initial model said {verification.gemini_validation.initial_model_verdict === "FALSE" ? "FAKE" : verification.gemini_validation.initial_model_verdict} ·{" "}
+                    {verification.gemini_validation.initial_model_was_correct
+                      ? "confirmed"
+                      : "overridden"}
+                  </span>
+                )}
               {verification.gemini_validation.agrees ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
                   <CheckCircle2 size={11} />
@@ -486,9 +505,91 @@ export function VerificationSection({ verification }: { verification: Verificati
                 </span>
               )}
             </div>
-            <p className="flex-1 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
-              {verification.gemini_validation.reasoning || "No reasoning returned."}
-            </p>
+            <div className="flex-1">
+              <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+                {verification.gemini_validation.reasoning || "No reasoning returned."}
+              </p>
+              {verification.gemini_validation.key_claims_verified &&
+                verification.gemini_validation.key_claims_verified.length > 0 && (
+                  <div className="mt-3">
+                    <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                      Key claims verified
+                    </p>
+                    <div className="flex flex-col gap-1.5">
+                      {verification.gemini_validation.key_claims_verified.slice(0, 4).map((kc, idx) => (
+                        <span
+                          key={idx}
+                          className="flex items-start gap-1.5 rounded border border-slate-100 bg-slate-50/70 px-2 py-1 text-[11px] text-slate-600 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-300"
+                        >
+                          <span
+                            className={cn(
+                              "mt-px shrink-0 rounded px-1 py-px text-[9px] font-bold",
+                              kc.status === "SUPPORTED"
+                                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+                                : kc.status === "REFUTED"
+                                  ? "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300"
+                                  : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
+                            )}
+                          >
+                            {kc.status}
+                          </span>
+                          <span className="min-w-0 flex-1">{kc.claim}</span>
+                          {kc.evidence_strength && kc.evidence_strength !== "—" && (
+                            <span className="shrink-0 text-[9px] font-semibold text-slate-400">
+                              {kc.evidence_strength}
+                            </span>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              {verification.gemini_validation.sources_checked &&
+                verification.gemini_validation.sources_checked.length > 0 && (
+                  <div className="mt-3">
+                    <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                      Sources checked ({verification.gemini_validation.sources_checked.length})
+                    </p>
+                    <div className="flex flex-col gap-1.5">
+                      {verification.gemini_validation.sources_checked.slice(0, 6).map((src, idx) => (
+                        <span
+                          key={idx}
+                          className="flex items-start gap-1.5 rounded border border-slate-100 bg-slate-50/70 px-2 py-1 text-[11px] text-slate-600 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-300"
+                        >
+                          <span
+                            className={cn(
+                              "mt-px shrink-0 rounded px-1 py-px text-[9px] font-bold",
+                              src.supports_claim
+                                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+                                : "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300",
+                            )}
+                          >
+                            {src.supports_claim ? "SUPPORTS" : "CONTRADICTS"}
+                          </span>
+                          {src.url ? (
+                            <a
+                              href={src.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex min-w-0 flex-1 items-center gap-0.5 text-primary-600 hover:underline dark:text-primary-400"
+                            >
+                              <span className="truncate">{src.title}</span>
+                              <ExternalLink size={10} className="shrink-0" />
+                            </a>
+                          ) : (
+                            <span className="min-w-0 flex-1">{src.title || "Source"}</span>
+                          )}
+                          {src.source_type && (
+                            <span className="shrink-0 text-[9px] uppercase text-slate-400">
+                              {src.source_type}
+                            </span>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+            </div>
           </div>
         </Card>
       )}

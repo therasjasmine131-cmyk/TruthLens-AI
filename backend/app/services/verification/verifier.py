@@ -55,6 +55,79 @@ def _ml_signal(claim_text: str):
         return None
 
 
+def _article_ml_signal(full_text: str):
+    """Article-level neural verdict used as the INITIAL model suggestion."""
+    if not full_text.strip():
+        return None
+    try:
+        from ...ml.model_manager import model_manager
+        if not model_manager.ready:
+            return None
+        p_real, p_fake = model_manager.predict_proba(full_text)
+        return {
+            "verdict": "REAL" if p_real >= p_fake else "FAKE",
+            "confidence": max(p_real, p_fake),
+            "reasoning": (
+                f"Local BiGRU stylistic signal: {max(p_real, p_fake):.1%} "
+                "toward the trained corpus label. Style only - needs grounding."
+            ),
+        }
+    except Exception:  # noqa: BLE001 - initial model must never break the engine
+        logger.exception("Initial model signal failed")
+        return None
+
+
+def _collect_search_results(claim_results: list[dict]) -> list[dict]:
+    """Real retrieved sources (never fabricated) for the FINAL engine."""
+    seen: set[str] = set()
+    items: list[dict] = []
+    for cr in claim_results:
+        for e in cr.get("evidence", []):
+            url = e.get("url") or ""
+            if url in seen:
+                continue
+            if url:
+                seen.add(url)
+            items.append({
+                "title": e.get("title") or (e.get("snippet") or "")[:120],
+                "url": url,
+                "source": e.get("source_name"),
+                "source_tier": e.get("source_tier"),
+                "type": e.get("retrieved_from"),
+                "date": e.get("date"),
+                "relation": e["relation"],
+                "snippet": (e.get("snippet") or e.get("text") or "")[:400],
+            })
+            if len(items) >= 16:
+                break
+        if len(items) >= 16:
+            break
+    return items
+
+
+def _gemini_validation_app_shape(engine: dict, overall: dict) -> dict:
+    """Map the FINAL-engine record onto the app's gemini_validation shape."""
+    label = "REAL" if engine.get("verdict") == "REAL" else "FALSE"
+    overall_norm = {"REAL": "REAL", "FALSE": "FALSE", "UNVERIFIED": "UNVERIFIED"}.get(
+        str((overall or {}).get("verdict", "")).upper(), "UNVERIFIED")
+    return {
+        "available": True,
+        "source": engine.get("source", "gemini"),
+        "model": engine.get("model"),
+        "label": label,
+        "confidence": round((engine.get("confidence") or 0) / 100, 3),
+        "agrees": label == overall_norm,
+        "reasoning": engine.get("reasoning", ""),
+        "verdict": engine.get("verdict"),
+        "confidence_score": engine.get("confidence"),
+        "initial_model_verdict": engine.get("initial_model_verdict"),
+        "initial_model_confidence": engine.get("initial_model_confidence"),
+        "initial_model_was_correct": engine.get("initial_model_was_correct"),
+        "sources_checked": engine.get("sources_checked", []),
+        "key_claims_verified": engine.get("key_claims_verified", []),
+    }
+
+
 def _evidence_signal(claim: dict, ml: dict | None) -> dict:
     """Evidence retrieval, classification and evidence-side verdict for a claim."""
     claim_text = claim["text"]
@@ -275,9 +348,19 @@ def verify_text(text: str | None, headline: str | None = None,
     gemini_validation = None
     if os.environ.get("GEMINI_API_KEY", "").strip():
         try:
-            gemini_validation = ai_stage.final_validation(
-                full_text, overall, claim_results, lang.get("code", "english"),
+            initial = _article_ml_signal(full_text)
+            engine = ai_stage.final_verdict_engine(
+                headline=headline or "",
+                article=text or "",
+                language=lang.get("code", "english"),
+                initial_verdict=(initial or {}).get("verdict", "n/a"),
+                initial_confidence=(initial or {}).get("confidence", 0.0),
+                initial_reasoning=(initial or {}).get("reasoning", ""),
+                search_results=_collect_search_results(claim_results),
+                provisional=overall,
             )
+            if engine:
+                gemini_validation = _gemini_validation_app_shape(engine, overall)
         except Exception:  # noqa: BLE001 - final validation must never crash
             logger.exception("Gemini final validation degraded")
 
@@ -380,12 +463,14 @@ def verify_text(text: str | None, headline: str | None = None,
                 "enable AI analysis #1 and the AI critic (#2)."
             ),
             "gemini_validation_note": (
-                "As the final step, Gemini independently validated the pipeline "
-                "result and explains WHY it judged the article real, fake, or "
-                "unverified."
+                "As the FINAL step, the AI independently verified the news "
+                "from the article plus live search evidence, and explains WHY "
+                "it is REAL or FAKE (the initial model's verdict is only a "
+                "suggestion and is overridden when the evidence disagrees)."
             ) if gemini_validation else (
-                "Final Gemini validation did not run (GEMINI_API_KEY not set or "
-                "unreachable) - the evidence-led result stands without it."
+                "Final AI verification did not run (GEMINI_API_KEY not set, "
+                "unreachable, or it refused a REAL/FAKE verdict) - the "
+                "evidence-led result stands without it."
             ),
         },
     }

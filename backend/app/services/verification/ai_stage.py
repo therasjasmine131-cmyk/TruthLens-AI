@@ -98,34 +98,71 @@ _USER_REVIEW = (
     "- List real problems only; do not invent issues to disagree."
 )
 
-_SYSTEM_VALIDATE = (
-    "You are the FINAL VALIDATOR of a multi-stage fact-check pipeline. A "
-    "pipeline (neural-network signal + evidence retrieval + AI analysis #1 + "
-    "adversarial AI review #2) has already produced a PROVISIONAL verdict for "
-    "the submitted news text. Do not blindly trust it - independently judge the "
-    "text yourself and give YOUR OWN final verdict: REAL (true news), FAKE "
-    "(false/misleading), or UNVERIFIED (cannot be confirmed).\n"
-    "Critically, you MUST explain WHY: if REAL, name the specific facts or "
-    "reporting that make it credible; if FAKE, point out exactly what is wrong "
-    "or misleading and why; if UNVERIFIED, say what is missing. Base this on "
-    "your knowledge of the world and on the evidence summary below. Never "
-    "invent specific sources or URLs that were not provided."
+_SYSTEM_FINAL_ENGINE = (
+    "You are the FINAL verification engine for a news fact-check system. An "
+    "AI/ML model has already analyzed the news and provided an INITIAL "
+    "prediction. That prediction is ONLY a suggestion and may be WRONG. "
+    "Never assume it is correct.\n\n"
+    "STEP 1 - Understand the news: read the full headline and article; split it "
+    "into the important factual claims (WHO, WHAT, WHEN, WHERE, EVENT, NUMBERS, "
+    "QUOTES, ORGANIZATIONS, DATES, OFFICIAL POSITIONS).\n\n"
+    "STEP 2 - Check the initial model: treat its verdict only as a "
+    "hypothesis. Do not conclude FAKE just because it says FAKE, or REAL just "
+    "because it says REAL. Investigate from evidence.\n\n"
+    "STEP 3 - Ground in the SEARCH RESULTS below (retrieved from Wikipedia, "
+    "Google Fact Check, NewsAPI, and the knowledge base). Only use sources that "
+    "are actually listed. Never invent titles, URLs, or quotes.\n\n"
+    "STEP 4 - Use current information: prefer recent evidence; note when a "
+    "claim relies on outdated information.\n\n"
+    "STEP 5 - Source check: weigh official/government sources and reputable "
+    "news/fact-check organizations; copied articles are NOT independent "
+    "confirmation. Count distinct independent sources.\n\n"
+    "STEP 6 - Headline check: compare the headline with the article body. A "
+    "minor wording difference is not FAKE on its own; flag exact exaggerations "
+    "or contradictions.\n\n"
+    "STEP 7 - Article check: verify the article's core facts (names, dates, "
+    "locations, quotes, numbers, organizations, official announcements).\n\n"
+    "STEP 8 - Contradiction search: weigh any evidence that contradicts the "
+    "article against the evidence that supports it.\n\n"
+    "STEP 9 - No article does not mean FAKE: if no reporting exists yet, search "
+    "for official announcements and primary sources. A breaking event can be "
+    "REAL before news coverage appears.\n\n"
+    "STEP 10 - Decide: after reviewing the initial model prediction, the "
+    "article, the search evidence, source quality, and contradictions, give "
+    "YOUR OWN final decision. Keep the initial model's verdict only if the "
+    "evidence supports it; otherwise OVERRIDE it. The initial model must never "
+    "override your decision."
 )
 
-_USER_VALIDATE = (
-    "Article (language: {language}):\n{article}\n\n"
-    "Pipeline result (provisional):\n{overall}\n\n"
-    "Adds up to a verdict of \"{verdict}\" at {confidence}% confidence.\n\n"
-    "Claim-by-claim summary:\n{claims}\n\n"
+_USER_FINAL_ENGINE = (
+    "HEADLINE:\n{headline}\n\n"
+    "ARTICLE:\n{article}\n\n"
+    "LANGUAGE:\n{language}\n\n"
+    "INITIAL_MODEL_VERDICT:\n{initial_verdict}\n\n"
+    "INITIAL_MODEL_CONFIDENCE:\n{initial_confidence}\n\n"
+    "INITIAL_MODEL_REASONING:\n{initial_reasoning}\n\n"
+    "SEARCH RESULTS (retrieved live; use ONLY these - never invent any):\n"
+    "{search_results}\n\n"
+    "PIPELINE PROVISIONAL RESULT:\n{provisional}\n\n"
     'Respond with STRICT JSON only, no markdown:\n'
-    '{{"label": "REAL or FAKE or UNVERIFIED", "confidence": 0.0, '
-    '"agrees": true or false, "reasoning": "explain WHY it is REAL, WHY it '
-    'is FAKE, or why it cannot be verified - a few clear sentences"}}\n'
-    "- label: your independent final validation of the whole article.\n"
-    "- confidence: 0.0 to 1.0 how sure you are about your label.\n"
-    "- agrees: whether you agree with the pipeline's provisional verdict.\n"
-    "- reasoning: the 'why' - concrete reasons a reader will understand.\n"
-    "- Never mention pipeline stage names; speak as a fact-checker to a reader."
+    '{{"verdict": "REAL or FAKE", "confidence": 95, "reasoning": "...", '
+    '"sources_checked": [{{"title": "...", "url": "https://...", '
+    '"source_type": "official|news|fact-check|reference", '
+    '"published_date": "YYYY-MM-DD or null", "supports_claim": true or false}}], '
+    '"key_claims_verified": [{{"claim": "...", '
+    '"status": "SUPPORTED|REFUTED|UNRESOLVED", '
+    '"evidence_strength": "HIGH|MEDIUM|LOW"}}]}}\n'
+    "- verdict: ONLY \"REAL\" or \"FAKE\". NEVER return UNVERIFIED, UNCERTAIN, "
+    "or UNKNOWN.\n"
+    "- confidence: 0-100. 90-100 = strong evidence from primary or multiple "
+    "independent credible sources; 75-89 = good supporting evidence; 50-74 = "
+    "limited or conflicting; 25-49 = weak; 0-24 = very little. Confidence is "
+    "evidence strength, NOT the initial model's confidence.\n"
+    "- reasoning: a few clear sentences explaining what you checked and why.\n"
+    "- sources_checked: only sources from SEARCH RESULTS that you actually "
+    "used, with their real URL. Empty list is allowed when none applies.\n"
+    "- key_claims_verified: the important factual claims and how each checked "
+    "out (SUPPORTED / REFUTED / UNRESOLVED)."
 )
 
 _DECISION_RE = re.compile(r'"decision"\s*:\s*"(SUPPORT[^",]*|CONTRADICT[^",]*|INSUFFICIENT[^",]*|UNVERIFIED)"', re.I)
@@ -459,78 +496,184 @@ def _run_review(claim: str, ctx: str, ai1: dict, language: str,
 
 
 # ---------------------------------------------------------------------------
-# Final validation (Gemini) - the last stage
+# FINAL verification engine (Gemini) - the last stage
 # ---------------------------------------------------------------------------
 
 def _normalize_final_label(value: object) -> str | None:
-    """Map a label string to the verdict convention REAL / FALSE / UNVERIFIED."""
+    """Map a label string to REAL / FALSE / UNVERIFIED."""
     return _FINAL_LABELS.get(str(value or "").strip().upper())
 
 
-def final_validation(article: str, overall: dict, claims: list[dict],
-                     language: str = "english") -> dict | None:
-    """Gemini independently validates the pipeline's final result and says WHY.
+def _tier_to_source_type(tier: str | None) -> str:
+    normalized = {
+        "primary": "official", "authoritative": "official",
+        "authoritative-reference": "official",
+        "official": "official", "government": "official",
+        "news": "news", "secondary": "news",
+        "factcheck": "fact-check", "fact-check": "fact-check",
+    }.get(str(tier or "").strip().lower())
+    return normalized or "reference"
 
-    This is the LAST stage of the pipeline: after the AI test result (NN +
-    evidence + AI analysis #1 + adversarial review #2) is produced, Gemini
-    reviews the whole article, gives its own Real/Fake/Unverified label and a
-    plain-language explanation of WHY. Returns ``None`` when Gemini is not
-    configured or unreachable (the pipeline result is then unchanged).
-    """
-    provisional = (overall or {}).get("verdict") or "UNVERIFIED"
-    confidence = (overall or {}).get("confidence") or 0.0
-    explanation = (overall or {}).get("explanation") or ""
+
+_SOURCE_FIELDS = ("title", "url", "source_type", "published_date", "supports_claim")
+_CLAIM_FIELDS = ("claim", "status", "evidence_strength")
+
+
+def format_search_results(items: list[dict]) -> str:
+    """Compact, real source list for the FINAL engine prompt (never invented)."""
     rows = []
-    for claim in (claims or [])[:6]:
+    for e in items[:16]:
+        relation = e.get("relation", "NEUTRAL")
+        source = e.get("source") or e.get("source_name") or e.get("domain") or "unknown"
+        url = e.get("url") or ""
+        date = e.get("date") or e.get("published_date") or ""
+        snippet = (e.get("snippet") or e.get("text") or e.get("title") or "")[:240]
         rows.append(
-            f"- \"{str(claim.get('text'))[:200]}\" -> {claim.get('verdict')}"
-            f" (authority: {claim.get('final_authority', claim.get('authority', 'n/a'))}, "
-            f"confidence {claim.get('confidence', 0):.2f})"
+            f"- [{relation}] \"{str(e.get('title') or '')[:160]}\" "
+            f"({source}, type: {_tier_to_source_type(e.get('type') or e.get('source_tier'))}"
+            f"{', ' + str(date) if date else ''})\n"
+            f"  url: {url}\n  snippet: {snippet}"
         )
-    overall_txt = (
-        f"verdict={provisional}, confidence={confidence:.2f}, "
-        f"explanation={str(explanation)[:600]}"
+    return "\n\n".join(rows) if rows else "(no search results were retrieved)"
+
+
+def _clean_sources_checked(value: object, allowed_urls: set[str],
+                           allowed_sources: list[dict]) -> list[dict]:
+    """Keep only sources that were ACTUALLY retrieved - never fabricate URLs."""
+    out: list[dict] = []
+    for raw in (value or [])[:8]:
+        if not isinstance(raw, dict):
+            continue
+        item: dict = {}
+        url = str(raw.get("url") or "").strip()
+        if url and (url not in allowed_urls):
+            continue
+        item["url"] = url or None
+        item["title"] = str(raw.get("title") or "")[:200]
+        item["source_type"] = str(raw.get("source_type")
+                                  or raw.get("type") or "reference")[:40]
+        for src in allowed_sources:
+            if url and url == src.get("url"):
+                item.setdefault("published_date",
+                                str(src.get("date") or src.get("published_date") or "") or None)
+                break
+        if "published_date" not in item:
+            item["published_date"] = (str(raw.get("published_date") or "")
+                                      if raw.get("published_date") else None)
+        item["supports_claim"] = bool(raw.get("supports_claim", True))
+        if item.get("url") or item.get("title"):
+            out.append(item)
+    return out
+
+
+def _clean_key_claims(value: object) -> list[dict]:
+    status_map = {
+        "SUPPORTED": "SUPPORTED", "SUPPORT": "SUPPORTED", "SUPPORTS": "SUPPORTED",
+        "CONFIRMED": "SUPPORTED", "TRUE": "SUPPORTED", "REAL": "SUPPORTED",
+        "REFUTED": "REFUTED", "CONTRADICTED": "REFUTED", "CONTRADICTS": "REFUTED",
+        "CONTRADICT": "REFUTED", "DISPROVEN": "REFUTED", "FALSE": "REFUTED",
+        "FAKE": "REFUTED",
+    }
+    out: list[dict] = []
+    for raw in (value or [])[:8]:
+        if not isinstance(raw, dict):
+            continue
+        status = status_map.get(str(raw.get("status") or "").strip().upper(), "UNRESOLVED")
+        strength = str(raw.get("evidence_strength") or "").upper()[:8]
+        if strength not in {"HIGH", "MEDIUM", "LOW"}:
+            strength = "—"
+        out.append({
+            "claim": str(raw.get("claim") or "")[:240],
+            "status": status,
+            "evidence_strength": strength,
+        })
+    return out
+
+
+def final_verdict_engine(headline: str, article: str, language: str,
+                         initial_verdict: str, initial_confidence: float,
+                         initial_reasoning: str,
+                         search_results: list[dict] | None = None,
+                         provisional: dict | None = None) -> dict | None:
+    """Gemini independently verifies the news and is the FINAL decision-maker.
+
+    Never blindly trusts the initial model. Grounds on the article, the live
+    search results (real sources only), and its own reasoning, then returns the
+    per-spec JSON verdict (REAL/FAKE, 0-100 confidence, sources_checked,
+    key_claims_verified, initial_model_was_correct). Returns ``None`` when the
+    provider is unavailable or refuses a REAL/FAKE verdict (so the evidence-led
+    pipeline result stands).
+    """
+    allowed_urls = {
+        str(e.get("url") or "").strip() for e in (search_results or []) if e.get("url")
+    }
+    key = _cache_key(
+        "final_engine", headline[:1500], article[:3500], language,
+        initial_verdict, str(initial_confidence),
+        json.dumps(search_results or [], sort_keys=True, default=str)[:4000],
     )
-    key = _cache_key("final_validate", article[:2000], overall_txt)
     if key in _CACHE:
         return _CACHE[key]
-    result = _run_final_validation(article, overall_txt, provisional,
-                                   confidence, rows, language)
-    _CACHE[key] = result
+    result = _run_final_engine(
+        headline, article, language, initial_verdict, initial_confidence,
+        initial_reasoning, search_results or [], provisional,
+        allowed_urls, key,
+    )
+    if result is not None:
+        _CACHE[key] = result
     return result
 
 
-def _run_final_validation(article: str, overall_txt: str, provisional: str,
-                          confidence: float, rows: list[str],
-                          language: str) -> dict | None:
-    user = _USER_VALIDATE.format(
+def _run_final_engine(headline: str, article: str, language: str,
+                      initial_verdict: str, initial_confidence: float,
+                      initial_reasoning: str, search_results: list[dict],
+                      provisional: dict | None, allowed_urls: set[str],
+                      cache_key: str) -> dict | None:
+    provisional_txt = (
+        f"verdict={provisional.get('verdict', 'n/a')}, "
+        f"confidence={provisional.get('confidence', 0):.2f}, "
+        f"counts={provisional.get('counts', {})}, "
+        f"explanation={str(provisional.get('explanation') or '')[:400]}"
+    ) if provisional else "(not available)"
+    user = _USER_FINAL_ENGINE.format(
+        headline=(headline or "").strip()[:2000],
+        article=(article or "").strip()[:4000],
         language=language or "english",
-        article=article[:3500] or "(no text)",
-        overall=overall_txt,
-        verdict=provisional,
-        confidence=confidence,
-        claims="\n".join(rows) if rows else "(no claims extracted)",
+        initial_verdict=str(initial_verdict or "n/a").upper(),
+        initial_confidence=f"{initial_confidence:.0f}" if initial_confidence else "n/a",
+        initial_reasoning=str(initial_reasoning or "")[:400],
+        search_results=format_search_results(search_results),
+        provisional=provisional_txt,
     )
-    obj = _call_gemini(_SYSTEM_VALIDATE, user, temperature=0.1)
+    obj = _call_gemini(_SYSTEM_FINAL_ENGINE, user, temperature=0.1)
     if not obj:
         return None
-    label = _normalize_final_label(obj.get("label") or obj.get("verdict")
+    label = _normalize_final_label(obj.get("verdict") or obj.get("label")
                                    or obj.get("decision"))
-    if not label:
+    # The engine is REAL/FAKE only: a refusal maps to "no verdict" and the
+    # honest evidence-led pipeline result is kept.
+    if label not in ("REAL", "FALSE"):
         return None
     try:
-        conf = max(0.0, min(1.0, float(obj.get("confidence", 0.5))))
+        conf = max(0.0, min(100.0, float(obj.get("confidence", 0))))
     except (TypeError, ValueError):
-        conf = 0.5
-    agrees = bool(obj.get("agrees", obj.get("agrees_with_first", False)))
-    if "agrees" not in obj and "agrees_with_first" not in obj:
-        agrees = (label == _normalize_final_label(provisional))
+        conf = 0.0
+    initial_norm = _normalize_final_label(initial_verdict)
+    if obj.get("initial_model_was_correct") is not None:
+        was_correct = bool(obj["initial_model_was_correct"])
+    else:
+        was_correct = bool(initial_norm) and (label == initial_norm)
     return {
         "available": True,
         "source": "gemini",
         "model": GEMINI_MODEL,
-        "label": label,
-        "confidence": round(conf, 3),
-        "agrees": agrees,
-        "reasoning": str(obj.get("reasoning", ""))[:600],
+        "verdict": label,            # "REAL" or "FALSE" (spec convention)
+        "confidence": round(conf),   # 0-100 (evidence strength)
+        "initial_model_verdict": _normalize_final_label(initial_verdict) or "n/a",
+        "initial_model_confidence": round(initial_confidence, 3),
+        "initial_model_was_correct": was_correct,
+        "reasoning": str(obj.get("reasoning", ""))[:800],
+        "sources_checked": _clean_sources_checked(
+            obj.get("sources_checked"), allowed_urls, search_results),
+        "key_claims_verified": _clean_key_claims(obj.get("key_claims_verified")),
     }
