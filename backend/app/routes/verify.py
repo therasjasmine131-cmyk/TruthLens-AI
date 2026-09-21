@@ -5,12 +5,13 @@ Decision chain (highest quality first, each step fails gracefully to the next):
 1. ``Gemini`` - the FINAL engine first, then the live web check. Best quality
    (Google Search grounding when the key allows it, otherwise the free live
    web search results). The Stage-1 BiGRU signal is a suggestion only.
-2. ``Ollama`` - if Gemini is unavailable/quota-limited, a local Ollama model
-   judges the SAME evidence the pipeline already gathered (no search of its
-   own). Free and unlimited wherever Ollama is running.
-3. ``rule-engine`` - last resort: the evidence-derived overall verdict forced
-   to REAL/FAKE with confidence capped low. Never a 502 just because an AI
-   provider is down.
+2. ``Groq`` / ``OpenRouter`` / ``OpenAI`` - free/cloud AI judges that see the
+   SAME evidence the pipeline already gathered (no search of their own). Tried
+   in that order; the first REAL/FAKE verdict wins.
+3. ``Ollama`` - a local model judging the same evidence. Free and unlimited
+   wherever Ollama is running.
+4. If NO AI provider can decide, the endpoint returns an ``ai_unavailable``
+   error - it never fabricates a verdict.
 
 ``final_verdict`` is always TRUE or FALSE.
 """
@@ -22,8 +23,8 @@ import logging
 from flask import Blueprint, jsonify, request
 
 from ..services.live_check import live_news_check
+from ..services.llm_check import cloud_ai_judge
 from ..services.ollama_check import ollama_judge
-from ..services.openai_check import openai_judge
 from ..services.verification_service import run_verification
 from ..services.verification.language import VALID_MODES
 from ..services.verification.verifier import verify_text
@@ -47,9 +48,16 @@ MAX_TEXT_CHARS = 30000
 
 AI_UNAVAILABLE_MESSAGE = (
     "AI verification is temporarily unavailable: every AI provider "
-    "(Gemini, ChatGPT and the local model) is rate-limited, out of quota or "
-    "unreachable. Please try again in a few minutes."
+    "(Gemini, Groq, OpenRouter, ChatGPT and the local model) is "
+    "rate-limited, out of quota or unreachable. Please try again in a few "
+    "minutes."
 )
+
+_CLOUD_LABELS = {
+    "groq": "Groq",
+    "openrouter": "OpenRouter",
+    "openai": "OpenAI (ChatGPT)",
+}
 
 
 def _gemini_basis(gemini_validation: dict | None, live: dict | None) -> tuple[str | None, bool]:
@@ -150,23 +158,26 @@ def verify():
     fallback_note = None
 
     if verdict is None:
-        # Tier 2: OpenAI (ChatGPT) judges the SAME gathered evidence (no search).
-        oai = openai_judge(
+        # Tier 2: a cloud AI (Groq -> OpenRouter -> ChatGPT) judges the SAME
+        # gathered evidence (no search of its own).
+        cloud = cloud_ai_judge(
             headline, article,
             _evidence_digest(verification),
             language="english" if language == "auto" else language,
         )
-        if oai:
-            verdict = oai.get("label")
-            source = "openai"
-            confidence_value = oai.get("confidence")
-            reasoning_value = oai.get("reasoning")
+        if cloud:
+            verdict = cloud.get("label")
+            source = cloud.get("source")
+            confidence_value = cloud.get("confidence")
+            reasoning_value = cloud.get("reasoning")
+            cloud_label = _CLOUD_LABELS.get(source, source or "a cloud AI")
             fallback_note = (
-                "Gemini was unavailable (quota/error), so OpenAI (ChatGPT) judged "
-                "the already-gathered evidence. AI source: OpenAI."
+                "Gemini was unavailable (quota/error), so "
+                f"{cloud_label} judged the already-gathered evidence. "
+                f"AI source: {cloud_label}."
             )
-            logger.info("[API] OpenAI fallback verdict: %s confidence=%s",
-                        verdict, confidence_value)
+            logger.info("[API] %s fallback verdict: %s confidence=%s",
+                        cloud_label, verdict, confidence_value)
 
     if verdict is None:
         # Tier 3: local Ollama judges the SAME gathered evidence (no search).
@@ -181,8 +192,9 @@ def verify():
             confidence_value = ollama.get("confidence")
             reasoning_value = ollama.get("reasoning")
             fallback_note = (
-                "Gemini and OpenAI were unavailable, so a local Ollama model "
-                "judged the already-gathered evidence. AI source: Ollama."
+                "Gemini and the cloud AI providers (Groq, OpenRouter, ChatGPT) "
+                "were unavailable, so a local Ollama model judged the "
+                "already-gathered evidence. AI source: Ollama."
             )
             logger.info("[API] Ollama fallback verdict: %s confidence=%s",
                         verdict, confidence_value)
@@ -222,8 +234,18 @@ def verify():
         ),
         "ollama": (
             "A local Ollama model judged the gathered evidence because Gemini "
-            "and OpenAI were unavailable. The local trained network's signal is "
-            "only a suggestion shown next to the verdict."
+            "and the cloud AI providers were unavailable. The local trained "
+            "network's signal is only a suggestion shown next to the verdict."
+        ),
+        "groq": (
+            "Groq decided TRUE or FALSE from the gathered evidence because "
+            "Gemini was unavailable. The local trained network's signal is only "
+            "a suggestion shown next to the verdict."
+        ),
+        "openrouter": (
+            "OpenRouter decided TRUE or FALSE from the gathered evidence "
+            "because Gemini was unavailable. The local trained network's signal "
+            "is only a suggestion shown next to the verdict."
         ),
         "openai": (
             "OpenAI (ChatGPT) decided TRUE or FALSE from the gathered evidence "

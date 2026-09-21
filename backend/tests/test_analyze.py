@@ -155,7 +155,7 @@ def test_analyze_headline_route_without_ai_returns_error(client, monkeypatch):
     monkeypatch.setattr(Config, "GEMINI_API_KEY", "")
     import app.routes.analyze as analyze_mod
 
-    monkeypatch.setattr(analyze_mod, "openai_judge", lambda *a, **k: None)
+    monkeypatch.setattr(analyze_mod, "cloud_ai_judge", lambda *a, **k: None)
     monkeypatch.setattr(analyze_mod, "ollama_judge", lambda *a, **k: None)
     resp = client.post("/api/analyze/headline", json={"headline": "A short headline here"})
     assert resp.status_code == 503

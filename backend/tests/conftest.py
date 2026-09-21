@@ -16,6 +16,19 @@ from app import create_app  # noqa: E402
 from app.config import TestConfig  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _no_cloud_keys(monkeypatch):
+    """Keep tests offline: never let a real .env key trigger live AI calls."""
+    for name in (
+        "GEMINI_API_KEY",
+        "GROQ_API_KEY",
+        "OPENROUTER_API_KEY",
+        "OPENAI_API_KEY",
+        "BAZAARLINK_API_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture()
 def app():
     return create_app(TestConfig)

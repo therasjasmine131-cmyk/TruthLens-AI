@@ -47,7 +47,7 @@ def _verification(verdict="UNVERIFIED", *, evidence=(), sources=(),
 def verify_client(client, monkeypatch):
     def _make(live=None, verdict="UNVERIFIED", evidence=(), sources=(),
               language=("english", "English"), gemini_validation=None,
-              ollama=None, openai=None, verify_text=None):
+              ollama=None, cloud=None, openai=None, verify_text=None):
         import app.routes.verify as verify_mod
 
         monkeypatch.setattr(verify_mod, "live_news_check", lambda *a, **k: live)
@@ -55,7 +55,8 @@ def verify_client(client, monkeypatch):
             verdict, evidence=evidence, sources=sources, language=language,
             gemini_validation=gemini_validation))
         monkeypatch.setattr(verify_mod, "ollama_judge", lambda *a, **k: ollama)
-        monkeypatch.setattr(verify_mod, "openai_judge", lambda *a, **k: openai)
+        monkeypatch.setattr(verify_mod, "cloud_ai_judge",
+                            lambda *a, **k: cloud if cloud is not None else openai)
         if verify_text is not None:
             monkeypatch.setattr(verify_mod, "verify_text", verify_text)
         return client
@@ -90,15 +91,15 @@ def test_maps_false_to_false(verify_client):
 
 
 def test_openai_fallback_judges_evidence(verify_client):
-    """Gemini unavailable but OpenAI IS reachable: OpenAI judges the SAME
-    gathered evidence and the endpoint returns its verdict."""
+    """Gemini unavailable but a cloud AI (OpenAI) IS reachable: it judges the
+    SAME gathered evidence and the endpoint returns its verdict."""
     client = verify_client(
         live={"label": "UNVERIFIED", "confidence": 0.4, "reasoning": "too recent"},
         verdict="UNVERIFIED",
         evidence=[{"title": "Widget Corp unveils fusion", "relation": "SUPPORT",
                    "source_name": "example.in", "url": "https://a.example"}],
-        openai={"label": "REAL", "confidence": 0.66,
-                "reasoning": "reporting corroborates the claim"},
+        cloud={"source": "openai", "label": "REAL", "confidence": 0.66,
+               "reasoning": "reporting corroborates the claim"},
         ollama={"label": "FAKE", "confidence": 0.9, "reasoning": "should not be used"},
     )
     resp = _post(client, headline="Widget Corp unveiled a fusion reactor.")
@@ -109,6 +110,22 @@ def test_openai_fallback_judges_evidence(verify_client):
     assert body["confidence"] == 0.66
     assert body["reasoning"] == "reporting corroborates the claim"
     assert body["fallback_note"]
+    assert "OpenAI" in body["fallback_note"]
+
+
+def test_groq_fallback_labels_source(verify_client):
+    """A Groq verdict is reported as the deciding source."""
+    client = verify_client(
+        live=None, verdict="UNVERIFIED",
+        cloud={"source": "groq", "label": "FAKE", "confidence": 0.7,
+               "reasoning": "evidence contradicts the claim"},
+    )
+    resp = _post(client, headline="Widget Corp invented warp drive.")
+    body = resp.get_json()
+    assert resp.status_code == 200
+    assert body["final_verdict"] == "FALSE"
+    assert body["verdict_source"] == "groq"
+    assert "Groq" in body["fallback_note"]
 
 
 def test_ollama_fallback_judges_evidence(verify_client):
@@ -276,7 +293,7 @@ def test_full_pipeline_offline_no_key():
     try:
         with create_app(TestConfig).test_client() as client:
             monkeypatch_os.setattr(verify_mod, "ollama_judge", lambda *a, **k: None)
-            monkeypatch_os.setattr(verify_mod, "openai_judge", lambda *a, **k: None)
+            monkeypatch_os.setattr(verify_mod, "cloud_ai_judge", lambda *a, **k: None)
             resp = _post(client, headline="The Earth revolves around the Sun.",
                          article="Astronomers say the planet orbits the star.")
             assert resp.status_code == 503

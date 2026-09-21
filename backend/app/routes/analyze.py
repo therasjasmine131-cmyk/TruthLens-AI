@@ -7,16 +7,17 @@ from flask import Blueprint, jsonify, request
 from ..config import Config
 from ..services.analyzer import analyze, analyze_headline_only
 from ..services.live_check import live_news_check
+from ..services.llm_check import cloud_ai_judge
 from ..services.ollama_check import ollama_judge
-from ..services.openai_check import openai_judge
 from .verify import _evidence_digest
 
 bp = Blueprint("analyze", __name__, url_prefix="/api")
 
 AI_UNAVAILABLE_MESSAGE = (
     "AI verification is temporarily unavailable: every AI provider "
-    "(Gemini, ChatGPT and the local model) is rate-limited, out of quota or "
-    "unreachable. Please try again in a few minutes."
+    "(Gemini, Groq, OpenRouter, ChatGPT and the local model) is "
+    "rate-limited, out of quota or unreachable. Please try again in a few "
+    "minutes."
 )
 
 
@@ -26,16 +27,16 @@ def _live_check(headline, article):
     return live_news_check(headline, article)
 
 
-def _openai_verdict(body: dict, headline, article) -> dict | None:
-    """OpenAI (ChatGPT) fallback verdict over the gathered evidence."""
-    oai = openai_judge(headline, article, _evidence_digest(body.get("verification")))
-    if not oai or not oai.get("label"):
+def _cloud_verdict(body: dict, headline, article) -> dict | None:
+    """Cloud AI (Groq/OpenRouter/ChatGPT) fallback verdict over the evidence."""
+    cloud = cloud_ai_judge(headline, article, _evidence_digest(body.get("verification")))
+    if not cloud or not cloud.get("label"):
         return None
     return {
-        "verdict": oai["label"],
-        "confidence": oai.get("confidence", 0.5),
-        "reasoning": oai.get("reasoning", ""),
-        "source": "openai",
+        "verdict": cloud["label"],
+        "confidence": cloud.get("confidence", 0.5),
+        "reasoning": cloud.get("reasoning", ""),
+        "source": cloud.get("source", "openai"),
     }
 
 
@@ -82,6 +83,8 @@ def _apply_ai_final(body: dict, ai_verdict: dict | None) -> None:
     reasoning = ai_verdict.get("reasoning", "") or ""
     authority = {
         "gemini": "gemini (AI)",
+        "groq": "groq (AI)",
+        "openrouter": "openrouter (AI)",
         "openai": "openai (AI)",
         "ollama": "ollama (AI)",
         "evidence+ai": "evidence+ai",
@@ -104,9 +107,10 @@ def _apply_ai_final(body: dict, ai_verdict: dict | None) -> None:
 def _resolve_ai(result: dict, headline, article) -> tuple[dict | None, dict | None]:
     """Resolve THE AI verdict, trying every provider in order.
 
-    Order: Gemini FINAL engine -> Gemini live check -> OpenAI (ChatGPT) ->
-    local Ollama. Returns ``(ai_verdict, live_check)`` where ``ai_verdict`` is
-    ``None`` when no AI provider could decide (the caller then returns an error).
+    Order: Gemini FINAL engine -> Gemini live check -> Groq -> OpenRouter ->
+    OpenAI (ChatGPT) -> local Ollama. Returns ``(ai_verdict, live_check)`` where
+    ``ai_verdict`` is ``None`` when no AI provider could decide (the caller then
+    returns an error).
     """
     ai_verdict = _engine_ai_verdict(result.get("verification"))
     if ai_verdict:
@@ -121,7 +125,7 @@ def _resolve_ai(result: dict, headline, article) -> tuple[dict | None, dict | No
             "source": "gemini",
         }, live_check
 
-    ai_verdict = _openai_verdict(result, headline, article)
+    ai_verdict = _cloud_verdict(result, headline, article)
     if ai_verdict:
         return ai_verdict, live_check
 
