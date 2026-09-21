@@ -27,6 +27,8 @@ import urllib.error
 import urllib.request
 from datetime import date
 
+from ..web_search import build_query, search_web
+
 logger = logging.getLogger("truthlens.ai_stage")
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
@@ -165,8 +167,8 @@ _USER_FINAL_ENGINE = (
     "fact-check organizations - and also actively search for contradicting "
     "evidence. Cite only real pages that Google Search returns; never invent "
     "titles, dates, quotes or URLs.\n\n"
-    "SEARCH RESULTS (retrieved live from Wikipedia / Google Fact Check / "
-    "NewsAPI / knowledge base; use ONLY these - never invent any):\n"
+    "SEARCH RESULTS (retrieved live from Google News / web search / "
+    "fact-check and knowledge sources; use ONLY these - never invent any):\n"
     "{search_results}\n\n"
     "PIPELINE PROVISIONAL RESULT:\n{provisional}\n\n"
     'Respond with STRICT JSON only, no markdown:\n'
@@ -758,6 +760,13 @@ def _run_final_engine(headline: str, article: str, language: str,
         f"counts={provisional.get('counts', {})}, "
         f"explanation={str(provisional.get('explanation') or '')[:400]}"
     ) if provisional else "(not available)"
+    # Free, keyless live web search: guarantees real current sources even when
+    # the paid Google Search grounding tool is quota-limited.
+    web_results: list[dict] = []
+    if not any(str(e.get("url") or "").strip() for e in search_results):
+        web_results = search_web(build_query(headline, article), limit=6)
+    combined_results = list(search_results) + web_results
+    allowed_urls |= {str(r.get("url") or "").strip() for r in web_results if r.get("url")}
     user = _USER_FINAL_ENGINE.format(
         headline=(headline or "").strip()[:2000],
         article=(article or "").strip()[:4000],
@@ -766,7 +775,7 @@ def _run_final_engine(headline: str, article: str, language: str,
         initial_verdict=str(initial_verdict or "n/a").upper(),
         initial_confidence=f"{initial_confidence:.0f}" if initial_confidence else "n/a",
         initial_reasoning=str(initial_reasoning or "")[:400],
-        search_results=format_search_results(search_results),
+        search_results=format_search_results(combined_results),
         provisional=provisional_txt,
     )
     obj, chunks, queries = _call_gemini_grounded(_SYSTEM_FINAL_ENGINE, user,
@@ -790,17 +799,25 @@ def _run_final_engine(headline: str, article: str, language: str,
     else:
         was_correct = bool(initial_norm) and (label == initial_norm)
     sources = _clean_sources_checked(
-        obj.get("sources_checked"), allowed_urls, search_results)
-    # Surface real Google Search grounding results even if the model omitted them.
+        obj.get("sources_checked"), allowed_urls, combined_results)
+    # Surface real sources the model omitted: Google grounding first, then the
+    # free live web search results.
     if not sources:
-        sources = [
-            {"title": c["title"], "url": c["url"], "source_type": "Google Search",
-             "published_date": None, "supports_claim": True}
-            for c in chunks[:8]
-        ]
+        if chunks:
+            sources = [
+                {"title": c["title"], "url": c["url"], "source_type": "Google Search",
+                 "published_date": None, "supports_claim": True}
+                for c in chunks[:8]
+            ]
+        else:
+            sources = [
+                {"title": r["title"], "url": r["url"], "source_type": r.get("source_type") or "web",
+                 "published_date": r.get("published_date"), "supports_claim": True}
+                for r in web_results[:8]
+            ]
     logger.info(
-        "[GEMINI] Parsed verdict=%s confidence=%d sources=%d queries=%d",
-        label, round(conf), len(sources), len(queries),
+        "[GEMINI] Parsed verdict=%s confidence=%d sources=%d queries=%d web=%d",
+        label, round(conf), len(sources), len(queries), len(web_results),
     )
     return {
         "available": True,

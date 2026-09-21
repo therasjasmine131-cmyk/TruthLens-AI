@@ -21,6 +21,8 @@ import urllib.error
 import urllib.request
 from datetime import date
 
+from .web_search import build_query, search_web
+
 logger = logging.getLogger("truthlens.live_check")
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
@@ -57,6 +59,7 @@ _USER_TEMPLATE = (
     "Verify this news claim.\n\n"
     "HEADLINE:\n{headline}\n"
     "{article_part}"
+    "{search_part}"
     "Respond with STRICT JSON only, no markdown, exactly:\n"
     '{{"label": "REAL or FAKE or UNVERIFIED", "confidence": 0.0, "reasoning": "one or two short sentences"}}\n'
     "Rules:\n"
@@ -91,8 +94,22 @@ def live_news_check(headline: str | None, article: str | None) -> dict | None:
         return None
 
     article_part = f"ARTICLE:\n{article}\n\n" if article else ""
+    web_results = search_web(build_query(headline, article), limit=6)
+    if web_results:
+        lines = [
+            f"- \"{r['title']}\" ({r.get('source_name') or r.get('domain') or 'web'}"
+            f"{', ' + str(r['published_date']) if r.get('published_date') else ''})\n"
+            f"  url: {r['url']}\n  snippet: {r['snippet']}"
+            for r in web_results
+        ]
+        search_part = (
+            "LIVE WEB RESULTS (retrieved now from Google News / web search; use "
+            "ONLY these real pages, never invent URLs):\n" + "\n".join(lines) + "\n\n"
+        )
+    else:
+        search_part = ""
     prompt = _USER_TEMPLATE.format(
-        headline=headline[:2000], article_part=article_part,
+        headline=headline[:2000], article_part=article_part, search_part=search_part,
     )
     system = _SYSTEM_PROMPT.format(today=date.today().isoformat())
     payload = {
@@ -130,14 +147,20 @@ def live_news_check(headline: str | None, article: str | None) -> dict | None:
                     if parsed is None:
                         continue
                     chunks, queries = _grounding_from_response(data)
+                    if not chunks and web_results:
+                        chunks = [
+                            {"title": r["title"], "url": r["url"],
+                             "source_type": r.get("source_type") or "web"}
+                            for r in web_results[:6]
+                        ]
                     parsed["source_types_checked"] = sorted(
                         {_source_type_for_url(c["url"]) for c in chunks})
                     parsed["sources"] = chunks
                     parsed["web_search_queries"] = queries
                     logger.info(
-                        "[GEMINI] live-check label=%s confidence=%s grounded=%s sources=%d queries=%d",
+                        "[GEMINI] live-check label=%s confidence=%s grounded=%s sources=%d queries=%d web=%d",
                         parsed.get("label"), parsed.get("confidence"),
-                        grounded, len(chunks), len(queries),
+                        grounded, len(chunks), len(queries), len(web_results),
                     )
                     return parsed
                 except urllib.error.HTTPError as exc:
