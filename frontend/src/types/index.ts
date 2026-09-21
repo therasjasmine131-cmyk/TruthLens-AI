@@ -77,7 +77,7 @@ export interface GeminiValidationSource {
 
 export interface KeyClaimVerified {
   claim: string;
-  status: "SUPPORTED" | "REFUTED" | "UNRESOLVED";
+  status: "SUPPORTED" | "CONTRADICTED" | "UNVERIFIED";
   evidence_strength?: "HIGH" | "MEDIUM" | "LOW" | string;
 }
 

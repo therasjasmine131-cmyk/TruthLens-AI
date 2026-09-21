@@ -526,7 +526,7 @@ export function VerificationSection({ verification }: { verification: Verificati
                               "mt-px shrink-0 rounded px-1 py-px text-[9px] font-bold",
                               kc.status === "SUPPORTED"
                                 ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
-                                : kc.status === "REFUTED"
+                                : kc.status === "CONTRADICTED"
                                   ? "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300"
                                   : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
                             )}
