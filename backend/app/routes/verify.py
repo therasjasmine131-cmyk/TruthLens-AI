@@ -65,11 +65,15 @@ def verify():
     live = live_news_check(headline, article)
     gemini_validation = (verification or {}).get("gemini_validation")
 
+    # Gemini (with live data) is the decision-maker. The FINAL engine casts the
+    # verdict (REAL/FAKE); the live check is used only if the engine is
+    # unavailable; the evidence-led overall is a last resort so the answer is
+    # almost always a firm TRUE or FALSE.
     verdict = UNVERIFIED_LABEL
-    if live and live.get("label"):
-        verdict = live["label"]
-    elif gemini_validation and gemini_validation.get("label"):
+    if gemini_validation and gemini_validation.get("label"):
         verdict = gemini_validation["label"]
+    elif live and live.get("label"):
+        verdict = live["label"]
     elif verification and verification.get("overall"):
         verdict = verification["overall"].get("verdict") or UNVERIFIED_LABEL
 
@@ -78,11 +82,11 @@ def verify():
             "status": "completed",
             "final_verdict": _VERDICT_MAP.get(verdict, "UNVERIFIED"),
             "confidence": (
-                (live.get("confidence") if live and live.get("label") else None)
+                (gemini_validation.get("confidence")
+                 if gemini_validation and gemini_validation.get("label")
+                 else None)
                 or (
-                    gemini_validation.get("confidence")
-                    if gemini_validation and gemini_validation.get("label")
-                    else None
+                    live.get("confidence") if live and live.get("label") else None
                 )
                 or (
                     verification.get("overall", {}).get("confidence")
@@ -92,11 +96,11 @@ def verify():
                 or 0.0
             ),
             "reasoning": (
-                (live.get("reasoning") if live and live.get("label") else None)
+                (gemini_validation.get("reasoning")
+                 if gemini_validation and gemini_validation.get("label")
+                 else None)
                 or (
-                    gemini_validation.get("reasoning")
-                    if gemini_validation and gemini_validation.get("label")
-                    else None
+                    live.get("reasoning") if live and live.get("label") else None
                 )
                 or (
                     verification.get("overall", {}).get("explanation")
@@ -121,10 +125,9 @@ def verify():
             "stages": (verification or {}).get("stages") if include_debug else None,
             "notes": {
                 "verdict_basis": (
-                    "Final verdict is evidence-led. The biometric-style signal "
-                    "from the local network never fabricates sources; when "
-                    "nothing credible confirms or contradicts a claim, the "
-                    "verdict stays UNVERIFIED."
+                    "Gemini decides TRUE or FALSE using live data and its own "
+                    "knowledge. The local trained network's signal is only a "
+                    "suggestion shown next to the verdict - it never decides."
                 )
             },
         }

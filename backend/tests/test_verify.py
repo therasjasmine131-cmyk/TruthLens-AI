@@ -113,7 +113,9 @@ def test_gemini_final_validation_resolves_when_no_live(verify_client):
     assert body["gemini_validation"]["reasoning"]
 
 
-def test_gemini_final_validation_does_not_override_live(verify_client):
+def test_final_engine_is_the_decision_maker(verify_client):
+    """Gemini's FINAL engine (REAL/FAKE) always wins over the live check -
+    the local models only ever give a suggestion."""
     client = verify_client(
         live={"label": "FAKE", "confidence": 0.95, "reasoning": "contradicts facts"},
         verdict="REAL",
@@ -125,8 +127,21 @@ def test_gemini_final_validation_does_not_override_live(verify_client):
     )
     resp = _post(client, headline="Vaccines cause autism.")
     body = resp.get_json()
-    assert body["final_verdict"] == "FALSE"
-    assert body["confidence"] == 0.95
+    assert body["final_verdict"] == "TRUE"
+    assert body["confidence"] == 0.8
+    assert body["reasoning"] == "looks credible"
+    assert body["gemini_validation"]["label"] == "REAL"
+
+
+def test_live_check_decides_when_engine_unavailable(verify_client):
+    """When the FINAL engine did not run, Gemini's live check is used."""
+    client = verify_client(
+        live={"label": "FAKE", "confidence": 0.95, "reasoning": "contradicts facts"},
+        verdict="REAL",
+        gemini_validation=None,
+    )
+    resp = _post(client, headline="Vaccines cause autism.")
+    assert resp.get_json()["final_verdict"] == "FALSE"
 
 
 def test_no_invented_sources_never_fabricated(verify_client):

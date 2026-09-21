@@ -59,7 +59,8 @@ describe("ResultPanel", () => {
     expect(screen.getByText("How TruthLens Works")).toBeInTheDocument();
     expect(screen.getByText("One end-to-end pipeline — every step is executed and logged on the backend.")).toBeInTheDocument();
     expect(screen.getByText(/Claim extraction — split the text into atomic checkable claims/)).toBeInTheDocument();
-    expect(screen.getByText(/then AI final validation explains WHY it is real, fake, or unverified/)).toBeInTheDocument();
+    expect(screen.getByText(/Gemini decides TRUE or FALSE using live data and its own knowledge/)).toBeInTheDocument();
+    expect(screen.getByText(/overall verdict — Gemini's final answer is shown/i)).toBeInTheDocument();
   });
 
   it("does not show a manufactured UNCERTAIN percentage for a decided prediction", () => {

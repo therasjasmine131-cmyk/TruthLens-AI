@@ -441,9 +441,10 @@ def verify_text(text: str | None, headline: str | None = None,
         "stages": stages if include_debug else None,
         "notes": {
             "model_note": (
-                "The local neural network is used as a secondary stylistic "
-                "signal only. Verdicts are driven by retrieved evidence and "
-                "source credibility."
+                "The local neural network is only a suggestion (stylistic "
+                "signal). Gemini decides TRUE or FALSE using live data and its "
+                "own knowledge; retrieved evidence and source credibility "
+                "support that decision."
             ),
             "no_evidence_note": (
                 "No live evidence sources were configured or reachable. Results for "

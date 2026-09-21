@@ -42,8 +42,8 @@ const FLOW_STEPS = [
   "Evidence scoring — relevance, source credibility, temporal freshness per claim",
   "AI analysis #1 — judge each claim SUPPORT / CONTRADICT / INSUFFICIENT from evidence only",
   "Adversarial AI review #2 — independent AI critic hunts for errors in AI #1",
-  "Final decision engine — evidence-led verdict per claim (strong evidence > AI > ML, tie-break only)",
-  "Overall verdict — combine claim verdicts, then AI final validation explains WHY it is real, fake, or unverified",
+  "Final decision engine — Gemini decides TRUE or FALSE using live data and its own knowledge",
+  "Overall verdict — Gemini's final answer is shown; the local model's suggestion is displayed beside it, never as the answer",
 ];
 
 export function ResultPanel({
