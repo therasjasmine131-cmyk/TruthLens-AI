@@ -335,8 +335,14 @@ export function VerificationSection({ verification }: { verification: Verificati
 
   return (
     <div className="space-y-4 animate-fade-in">
-      {/* Overall verdict */}
+      {/* Evidence assessment (secondary signal; the AI verdict above is final) */}
       <Card className="overflow-hidden">
+        <div className="border-b border-slate-100 px-5 pt-4 dark:border-slate-800">
+          <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Evidence Assessment</h3>
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+            Secondary signal from retrieved sources — the AI verdict decides the final answer.
+          </p>
+        </div>
         <div className="flex flex-col items-center gap-4 p-6 text-center sm:flex-row sm:text-left">
           <div className="flex flex-col items-center gap-2 sm:items-start">
             <VerdictBadge verdict={overall.verdict} />

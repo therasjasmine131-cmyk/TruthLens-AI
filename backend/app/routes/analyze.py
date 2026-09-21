@@ -18,8 +18,19 @@ def _live_check(headline, article):
 
 
 def _ai_verdict(live_check: dict | None, verification: dict | None) -> dict | None:
-    """Build the article-level AI verdict: Gemini knowledge cross-check takes
-    priority, then the evidence-driven overall verdict."""
+    """Build the article-level AI verdict: the FINAL engine decision comes
+    first, then Gemini's live check, then the evidence-driven overall verdict.
+    The AI verdict is the one shown as the final answer."""
+
+    if verification:
+        gemini_validation = verification.get("gemini_validation")
+        if gemini_validation and gemini_validation.get("label"):
+            return {
+                "verdict": gemini_validation["label"],
+                "confidence": gemini_validation.get("confidence", 0.5),
+                "reasoning": gemini_validation.get("reasoning", ""),
+                "source": "gemini",
+            }
     if live_check and live_check.get("label"):
         return {
             "verdict": live_check["label"],

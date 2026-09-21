@@ -62,7 +62,8 @@ export function ResultPanel({
   const keywords = result.keywords.slice(0, 10);
   const feats = result.explanation?.features ?? [];
 
-  const finalVerdict = pickFinalVerdict(result);
+  const final = pickFinalVerdict(result);
+  const finalVerdict = final?.verdict ?? null;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -77,17 +78,24 @@ export function ResultPanel({
         </div>
       )}
 
-      {/* ---- Final verdict hero ---- */}
+      {/* ---- Final verdict hero = AI verdict ---- */}
       {finalVerdict && (
         <div className={`rounded-xl border p-5 ${VERDICT_STYLES[finalVerdict].card}`}>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className={`text-[11px] font-semibold uppercase tracking-wide ${VERDICT_STYLES[finalVerdict].muted}`}>
-                Final Verdict
+                Final Verdict · AI decided
               </p>
-              <p className={`mt-1 text-2xl font-bold ${VERDICT_STYLES[finalVerdict].text}`}>
-                {finalVerdict}
-              </p>
+              <div className="mt-1 flex flex-wrap items-center gap-3">
+                <p className={`text-2xl font-bold ${VERDICT_STYLES[finalVerdict].text}`}>
+                  {finalVerdict}
+                </p>
+                {final?.confidence != null && (
+                  <span className={`rounded-md px-2 py-1 text-sm font-bold tabular-nums ${VERDICT_STYLES[finalVerdict].pill}`}>
+                    {Math.round(final.confidence * 100)}% confidence
+                  </span>
+                )}
+              </div>
               <p className={`mt-1 max-w-xl text-xs leading-relaxed ${VERDICT_STYLES[finalVerdict].muted}`}>
                 {VERDICT_STYLES[finalVerdict].blurb}
               </p>
@@ -396,20 +404,30 @@ const VERDICT_STYLES: Record<
   },
 };
 
-function pickFinalVerdict(result: AnalysisResult): string | null {
+function pickFinalVerdict(result: AnalysisResult): { verdict: string; confidence?: number } | null {
+  // The AI (Gemini) verdict is THE final answer. Everything else - the local
+  // neural suggestion, the evidence-pipeline score - is a secondary signal.
+  const ai = result.ai_verdict;
+  if (ai?.verdict) {
+    const verdict = ai.verdict === "REAL" ? "TRUE" : ai.verdict === "FAKE" ? "FALSE" : "UNVERIFIED";
+    return { verdict, confidence: ai.confidence };
+  }
+  const gemini = result.verification?.gemini_validation;
+  if (gemini?.label) {
+    const verdict = gemini.label === "REAL" ? "TRUE" : "FALSE";
+    return { verdict, confidence: gemini.confidence };
+  }
+  const live = result.live_check;
+  if (live?.label) {
+    const verdict = live.label === "REAL" ? "TRUE" : live.label === "FAKE" ? "FALSE" : "UNVERIFIED";
+    return { verdict, confidence: live.confidence };
+  }
   const fromOverview = result.verdict;
   if (fromOverview) {
-    return fromOverview === "FALSE" ? "FALSE" : fromOverview === "UNVERIFIED" ? "UNVERIFIED" : "TRUE";
-  }
-  if (result.ai_verdict?.verdict) {
-    if (result.ai_verdict.verdict === "REAL") return "TRUE";
-    if (result.ai_verdict.verdict === "FAKE") return "FALSE";
-    if (result.ai_verdict.verdict === "UNVERIFIED") return "UNVERIFIED";
-  }
-  if (result.live_check?.label) {
-    if (result.live_check.label === "REAL") return "TRUE";
-    if (result.live_check.label === "FAKE") return "FALSE";
-    if (result.live_check.label === "UNVERIFIED") return "UNVERIFIED";
+    return {
+      verdict: fromOverview === "FALSE" ? "FALSE" : fromOverview === "UNVERIFIED" ? "UNVERIFIED" : "TRUE",
+      confidence: result.confidence,
+    };
   }
   return null;
 }

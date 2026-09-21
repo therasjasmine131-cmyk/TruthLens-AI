@@ -94,8 +94,26 @@ describe("ResultPanel", () => {
         />
       </MemoryRouter>
     );
-    expect(screen.getByText("Final Verdict")).toBeInTheDocument();
+    expect(screen.getByText("Final Verdict · AI decided")).toBeInTheDocument();
     expect(screen.getByText("FALSE")).toBeInTheDocument();
+  });
+
+  it("makes the AI verdict the final verdict, even when the evidence score disagrees", () => {
+    render(
+      <MemoryRouter>
+        <ResultPanel
+          result={{
+            ...SAMPLE_RESULT,
+            verdict: "FALSE",
+            ai_verdict: { verdict: "REAL", confidence: 0.99, reasoning: "reports confirm it", source: "gemini" },
+          }}
+          compact
+        />
+      </MemoryRouter>
+    );
+    expect(screen.getByText("Final Verdict · AI decided")).toBeInTheDocument();
+    expect(screen.getByText("TRUE")).toBeInTheDocument();
+    expect(screen.getByText("99% confidence")).toBeInTheDocument();
   });
 
   it("does not show a manufactured abstain card for an undecided result", () => {
