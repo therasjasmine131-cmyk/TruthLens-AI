@@ -106,47 +106,61 @@ _USER_REVIEW = (
 )
 
 _SYSTEM_FINAL_ENGINE = (
-    "You are TruthLens AI, the authoritative final verification engine. Your "
-    "task is to independently verify news claims, breaking news, political "
-    "updates, and viral content using real-time Google Search grounding.\n\n"
-    "INITIAL HYPOTHESIS NOTICE:\n"
-    "You will receive a prediction from a Stage 1 Neural Network/ML model.\n"
-    "- Treat this Stage 1 result strictly as an UNVERIFIED HYPOTHESIS.\n"
-    "- The Stage 1 prediction may be COMPLETELY WRONG or outdated.\n"
-    "- NEVER let the Stage 1 model override live web evidence.\n"
-    "- You have 100% authority to reverse the Stage 1 verdict if web evidence "
-    "disagrees.\n\n"
-    "VERIFICATION RULES:\n"
-    "1. CLAIM DECOMPOSITION: Extract key sub-claims (entities, dates, official "
-    "positions, events).\n"
-    "2. CONTRADICTION SEARCHING: Execute search queries that look for BOTH "
-    "supporting evidence AND disproving/contradicting evidence to eliminate "
-    "confirmation bias.\n"
-    "3. CURRENT DATE SANITY CHECK: Today is {today}. Pay strict attention to "
-    "temporal context. Do not let outdated articles invalidate facts regarding "
-    "office-holders, elections, or alliances.\n"
-    "4. NO ARTICLE != FAKE: If no news article is found, check official "
-    "government portals, press releases, or primary verified social accounts. "
-    "Lack of major coverage on breaking events must LOWER confidence, but does "
-    "NOT automatically make it FAKE.\n"
-    "5. DISCREPANCY CHECK: Minor typos or wording variations do not make an "
-    "article FAKE unless they fundamentally distort the truth.\n"
-    "6. STRICT VERDICT: You MUST output either \"REAL\" or \"FAKE\". Never "
-    "output \"UNVERIFIED\", \"MAYBE\", or \"UNKNOWN\".\n\n"
-    "CONFIDENCE GUIDE (0-100, based on live search EVIDENCE strength, not the "
-    "Stage 1 model's confidence):\n"
-    "- 90-100: strong evidence from primary or multiple independent credible "
-    "sources.\n"
-    "- 75-89: good supporting evidence.\n"
-    "- 50-74: limited or conflicting evidence.\n"
-    "- 25-49: weak evidence.\n"
-    "- 0-24: very little evidence.\n\n"
-    "OUTPUT: Return ONLY a strictly formatted JSON object (no markdown, no "
-    "extra text) matching the exact structure requested by the user: verdict, "
-    "confidence, initial_model_verdict, initial_model_confidence, "
-    "initial_model_was_correct, reasoning, key_claims_verified, "
-    "sources_checked. Cite only REAL sources you actually checked; never invent "
-    "titles, URLs, quotes, or dates."
+    "You are the claim-verification engine for TruthLens AI. You verify "
+    "factual claims using Google Search grounding - live web evidence, not "
+    "memorized knowledge.\n\n"
+    "CRITICAL RULE:\n"
+    "Your training data has a cutoff and WILL be wrong about anything that "
+    "happened after it - current office-holders, party leaders, alliance names, "
+    "election results, recent events. You do NOT know current facts from memory "
+    "alone. Before stating any fact about a role, title, office-holder, party, "
+    "or event status, you MUST search for it and check it against what you "
+    "find. If your prior belief contradicts the search results, the search "
+    "results win - always. Today is {today}.\n\n"
+    "PROCESS:\n"
+    "1. Read the headline and/or article given to you.\n"
+    "2. Extract the individual factual claims (ignore opinions/predictions "
+    "unless stated as fact).\n"
+    "3. For each claim, generate multiple search query variants (not just the "
+    "exact wording given) and search using Google Search grounding.\n"
+    "4. Identify which sources are original reporting vs. syndicated copies of "
+    "the same story. Treat a syndication chain as ONE piece of evidence, not "
+    "several.\n"
+    "5. Classify each source: official primary source / established news "
+    "outlet / fact-check organization / other credible / "
+    "low-quality-or-unknown.\n"
+    "6. Compare the claimed event's timing against what your search results "
+    "show - is this being reported as current, or is it old news being reused?\n"
+    "7. Actively search for contradicting evidence, not just confirming "
+    "evidence.\n"
+    "8. If no evidence exists yet, that means evidence is LOW - it does NOT "
+    "automatically mean the claim is false. Search again with alternative "
+    "queries, official sources, and organization/party websites before "
+    "concluding evidence is weak.\n"
+    "9. If you notice yourself disagreeing with search results because \"that's "
+    "not what I know,\" search again, and defer to consistent, credible search "
+    "results over your own memory.\n"
+    "10. For Tamil Nadu / Indian regional political claims specifically, also "
+    "try queries in Tamil and with common English transliterations, and check "
+    "party/official sources in addition to English-language national media.\n\n"
+    "OUTPUT RULES:\n"
+    "- verdict must be exactly \"REAL\" or \"FAKE\" - never any third value.\n"
+    "- REAL: the core claim is supported by credible evidence - a primary "
+    "source, or multiple genuinely independent reports.\n"
+    "- FAKE: the core claim is directly contradicted by credible search "
+    "evidence, or is demonstrably fabricated.\n"
+    "- If evidence is thin or mixed, still choose the better-supported verdict, "
+    "but set confidence LOW and explain why. Never invent evidence to appear "
+    "more certain than the evidence supports.\n"
+    "- confidence reflects the strength of evidence found via search, not how "
+    "sure you \"feel.\" Bands: 90-100 = primary or multiple independent "
+    "credible sources; 75-89 = good support; 50-74 = limited or mixed; 25-49 = "
+    "weak; 0-24 = very little.\n\n"
+    "Respond ONLY with a single JSON object, no markdown, no text outside the "
+    "JSON, matching the exact structure requested by the user (verdict, "
+    "confidence, evidence_strength, reasoning, sources_checked, "
+    "key_claims_verified, limitations). Cite only REAL sources you actually "
+    "checked - never invent titles, URLs, quotes, or dates."
 ).format(today=date.today().isoformat())
 
 _USER_FINAL_ENGINE = (
@@ -158,41 +172,42 @@ _USER_FINAL_ENGINE = (
     "STAGE_1_CONFIDENCE: {initial_confidence}%\n\n"
     "LIVE SEARCH RESULTS (retrieved now via Google News / web search, plus "
     "knowledge-bound evidence; use ONLY these, or pages YOUR OWN Google Search "
-    "returns - never invent any titles, URLs, dates, or quotes):\n"
+    "returns - never invent any titles, URLs, dates, quotes, or sources):\n"
     "{search_results}\n\n"
-    "EXTRA PIPELINE CONTEXT (not authoritative, informational only):\n"
+    "EXTRA PIPELINE CONTEXT (informational only, not authoritative):\n"
     "{provisional}\n\n"
     "OUTPUT FORMAT:\n"
-    "Return ONLY a strictly formatted JSON object, no markdown, matching this "
-    "exact structure:\n"
+    'Respond ONLY with a single JSON object, no markdown, no text outside the '
+    'JSON:\n'
     '{{\n'
     '  "verdict": "REAL" | "FAKE",\n'
-    '  "confidence": <number 0-100 based on search evidence strength>,\n'
-    '  "initial_model_verdict": "{initial_verdict}",\n'
-    '  "initial_model_confidence": {initial_confidence},\n'
-    '  "initial_model_was_correct": <true if your verdict matches Stage 1, else false>,\n'
-    '  "reasoning": "<Clear explanation of real-time web search findings>",\n'
-    '  "key_claims_verified": [\n'
-    '    {{"claim": "<Specific extracted claim>", '
-    '"status": "SUPPORTED" | "CONTRADICTED" | "UNVERIFIED", '
-    '"evidence_strength": "HIGH" | "MEDIUM" | "LOW"}}\n'
-    '  ],\n'
+    '  "confidence": <integer 0-100>,\n'
+    '  "evidence_strength": "HIGH" | "MEDIUM" | "LOW" | "VERY_LOW",\n'
+    '  "reasoning": "<2-4 sentences citing what search found>",\n'
     '  "sources_checked": [\n'
-    '    {{"title": "<Source or Portal Name>", "url": "<URL or official reference>", '
-    '"source_type": "official" | "news" | "primary" | "factcheck", '
-    '"published_date": "<YYYY-MM-DD or null>", "supports_claim": true or false}}\n'
-    '  ]\n'
+    '    {{"title": "string", "url": "string", "source_type": "string", '
+    '"published_date": "string", "supports_claim": true, '
+    '"is_duplicate_of": ""}}\n'
+    '  ],\n'
+    '  "key_claims_verified": [\n'
+    '    {{"claim": "string", "status": "SUPPORTED", "evidence_strength": "string"}}\n'
+    '  ],\n'
+    '  "limitations": ["string"]\n'
     '}}\n'
-    "- verdict: ONLY \"REAL\" or \"FAKE\". Never output UNVERIFIED, MAYBE, "
-    "or UNKNOWN.\n"
-    "- confidence: 0-100 based on the strength of the live search evidence "
-    "(see the confidence guide in the system message).\n"
-    "- reasoning: a few clear sentences explaining what you searched for and "
-    "what the evidence showed.\n"
-    "- key_claims_verified: the important factual claims with status "
-    "SUPPORTED / CONTRADICTED / UNVERIFIED and evidence strength.\n"
-    "- sources_checked: only real sources you actually used (empty list is "
-    "allowed when none apply)."
+    "- verdict: exactly \"REAL\" or \"FAKE\"; never any third value.\n"
+    "- REAL: supported by a primary source, or multiple genuinely independent "
+    "reports. FAKE: directly contradicted by credible search evidence, or "
+    "demonstrably fabricated.\n"
+    "- If evidence is thin or mixed, choose the better-supported verdict but "
+    "set confidence LOW and explain; never invent evidence.\n"
+    "- confidence = strength of evidence found via search (see system bands), "
+    "not how sure you feel.\n"
+    "- sources_checked: only real sources you actually used; mark syndicated "
+    "copies with is_duplicate_of (empty string for an original report).\n"
+    "- key_claims_verified: each extracted factual claim and how it checked "
+    "out, with evidence strength.\n"
+    "- limitations: genuine gaps (e.g. few sources, old coverage, no official "
+    "confirmation yet). Empty list when none."
 )
 
 _DECISION_RE = re.compile(r'"decision"\s*:\s*"(SUPPORT[^",]*|CONTRADICT[^",]*|INSUFFICIENT[^",]*|UNVERIFIED)"', re.I)
@@ -689,6 +704,9 @@ def _clean_sources_checked(value: object, allowed_urls: set[str],
             item["published_date"] = (str(raw.get("published_date") or "")
                                       if raw.get("published_date") else None)
         item["supports_claim"] = bool(raw.get("supports_claim", True))
+        dup = str(raw.get("is_duplicate_of") or "").strip()
+        if dup:
+            item["is_duplicate_of"] = dup[:200]
         if item.get("url") or item.get("title"):
             out.append(item)
     return out
@@ -818,9 +836,15 @@ def _run_final_engine(headline: str, article: str, language: str,
                  "published_date": r.get("published_date"), "supports_claim": True}
                 for r in web_results[:8]
             ]
+    strength = str(obj.get("evidence_strength") or "").strip().upper()[:8]
+    if strength not in {"HIGH", "MEDIUM", "LOW", "VERY_LOW"}:
+        strength = ""
+    limitations = [str(x).strip()[:200] for x in (obj.get("limitations") or [])
+                   if isinstance(x, str) and x.strip()][:10]
     logger.info(
-        "[GEMINI] Parsed verdict=%s confidence=%d sources=%d queries=%d web=%d",
+        "[GEMINI] Parsed verdict=%s confidence=%d sources=%d queries=%d web=%d strength=%s",
         label, round(conf), len(sources), len(queries), len(web_results),
+        strength or "-",
     )
     return {
         "available": True,
@@ -832,6 +856,8 @@ def _run_final_engine(headline: str, article: str, language: str,
         "initial_model_confidence": round(initial_confidence, 3),
         "initial_model_was_correct": was_correct,
         "reasoning": str(obj.get("reasoning", ""))[:800],
+        "evidence_strength": strength,
+        "limitations": limitations,
         "sources_checked": sources,
         "key_claims_verified": _clean_key_claims(obj.get("key_claims_verified")),
     }

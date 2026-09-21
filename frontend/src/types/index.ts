@@ -73,6 +73,7 @@ export interface GeminiValidationSource {
   source_type?: string | null;
   published_date?: string | null;
   supports_claim: boolean;
+  is_duplicate_of?: string;
 }
 
 export interface KeyClaimVerified {
@@ -94,6 +95,8 @@ export interface GeminiValidation {
   initial_model_verdict?: "REAL" | "FALSE" | string;
   initial_model_confidence?: number;
   initial_model_was_correct?: boolean;
+  evidence_strength?: "HIGH" | "MEDIUM" | "LOW" | "VERY_LOW" | string;
+  limitations?: string[];
   sources_checked?: GeminiValidationSource[];
   key_claims_verified?: KeyClaimVerified[];
 }

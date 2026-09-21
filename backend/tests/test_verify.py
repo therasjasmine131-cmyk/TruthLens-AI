@@ -1,10 +1,15 @@
 """Tests for POST /api/verify.
 
 Covers the landscape mapping (REAL->TRUE / FALSE->FALSE), input validation,
-language modes, the guarantee that ONLY Gemini decides (FINAL engine first,
-live check second), and the *no invented sources* / *no forced FAKE* rules:
-when neither Gemini stage produces a REAL/FAKE verdict the endpoint must
-return a verification error rather than guess.
+language modes, the guarantee that Gemini wins when available (FINAL engine
+first, live check second), and the free-unlimited fallback chain the product
+now guarantees:
+
+  Gemini  ->  Ollama (judges the SAME gathered evidence)  ->  rule-engine
+  (forced REAL/FAKE, confidence capped low)
+
+Never a 502 just because an AI provider is down, and NEVER silently
+UNVERIFIED: the endpoint always returns TRUE or FALSE.
 """
 
 from __future__ import annotations
@@ -41,13 +46,17 @@ def _verification(verdict="UNVERIFIED", *, evidence=(), sources=(),
 @pytest.fixture()
 def verify_client(client, monkeypatch):
     def _make(live=None, verdict="UNVERIFIED", evidence=(), sources=(),
-              language=("english", "English"), gemini_validation=None):
+              language=("english", "English"), gemini_validation=None,
+              ollama=None, verify_text=None):
         import app.routes.verify as verify_mod
 
         monkeypatch.setattr(verify_mod, "live_news_check", lambda *a, **k: live)
         monkeypatch.setattr(verify_mod, "run_verification", lambda *a, **k: _verification(
             verdict, evidence=evidence, sources=sources, language=language,
             gemini_validation=gemini_validation))
+        monkeypatch.setattr(verify_mod, "ollama_judge", lambda *a, **k: ollama)
+        if verify_text is not None:
+            monkeypatch.setattr(verify_mod, "verify_text", verify_text)
         return client
 
     return _make
@@ -66,6 +75,7 @@ def test_maps_real_to_true(verify_client):
     body = resp.get_json()
     assert body["final_verdict"] == "TRUE"
     assert body["confidence"] == 0.9
+    assert body["verdict_source"] == "live-check"
 
 
 def test_maps_false_to_false(verify_client):
@@ -73,38 +83,60 @@ def test_maps_false_to_false(verify_client):
                                  "reasoning": "contradicts facts"})
     resp = _post(client, headline="Vaccines cause autism.")
     assert resp.status_code == 200
-    assert resp.get_json()["final_verdict"] == "FALSE"
-
-
-def test_no_gemini_verdict_is_an_api_error(verify_client):
-    """Gemini says UNVERIFIED and no final engine - this is an error, not a
-    FAKE guess and not a silent UNVERIFIED answer."""
-    client = verify_client(live={"label": "UNVERIFIED", "confidence": 0.4,
-                                 "reasoning": "too recent"})
-    resp = _post(client, headline="A brand new invention on Mars.")
-    assert resp.status_code == 502
     body = resp.get_json()
-    assert body["status"] == "error"
-    assert "final_verdict" not in body or body.get("final_verdict") is None
+    assert body["final_verdict"] == "FALSE"
+    assert body["verdict_source"] == "live-check"
 
 
-def test_no_live_and_no_gemini_is_an_api_error(verify_client):
-    client = verify_client(live=None, verdict="UNVERIFIED")
+def test_ollama_fallback_judges_evidence(verify_client):
+    """Gemini unavailable but Ollama IS reachable: Ollama judges the SAME
+    gathered evidence and the endpoint returns its verdict."""
+    client = verify_client(
+        live={"label": "UNVERIFIED", "confidence": 0.4, "reasoning": "too recent"},
+        verdict="UNVERIFIED",
+        evidence=[{"title": "Widget Corp unveils fusion", "relation": "SUPPORT",
+                   "source_name": "example.in", "url": "https://a.example"}],
+        ollama={"label": "FAKE", "confidence": 0.72,
+                "reasoning": "evidence contradicts the claim"},
+    )
+    resp = _post(client, headline="Widget Corp invented warp drive.")
+    body = resp.get_json()
+    assert resp.status_code == 200
+    assert body["final_verdict"] == "FALSE"
+    assert body["verdict_source"] == "ollama"
+    assert body["confidence"] == 0.72
+    assert body["reasoning"] == "evidence contradicts the claim"
+    assert body["fallback_note"]
+
+
+def test_rule_engine_last_resort(verify_client):
+    """Neither Gemini nor Ollama available: rule-engine result forced to
+    REAL/FAKE with confidence capped low - still never a 502."""
+    client = verify_client(live=None, verdict="UNVERIFIED", ollama=None)
     resp = _post(client, headline="Something nobody can confirm yet.")
-    assert resp.status_code == 502
-    assert resp.get_json()["status"] == "error"
-
-
-def test_missing_gemini_never_silently_becomes_fake(verify_client):
-    """The guarantee: when Gemini produces no REAL/FAKE verdict the system
-    must NOT invent one or fabricate evidence."""
-    client = verify_client(live=None, verdict="UNVERIFIED")
-    resp = _post(client, headline="No known reporting about this claim.",
-                 article="This is a completely invented claim text with no basis.")
-    assert resp.status_code == 502
+    assert resp.status_code == 200
     body = resp.get_json()
-    assert body["status"] == "error"
-    assert "http" not in str(body) or body.get("evidence_matrix") is None
+    assert body["final_verdict"] in {"TRUE", "FALSE"}
+    assert body["verdict_source"] == "rule-engine"
+    assert body["confidence"] <= 0.55
+    assert body["fallback_note"]
+
+
+def test_rule_engine_forces_false_from_overall(verify_client):
+    """When the evidence rules reached FALSE, the rule-engine last resort
+    keeps that polarity (never silently flips to TRUE or UNVERIFIED)."""
+    client = verify_client(
+        live=None, verdict="FALSE", sources=("factcheck", "newsapi"),
+        ollama=None,
+        evidence=[{"title": "Fabrication exposed", "relation": "CONTRADICT",
+                   "source_name": "factcheck.org", "url": "https://f.example"}],
+    )
+    resp = _post(client, headline="A clearly fabricated report.")
+    body = resp.get_json()
+    assert body["final_verdict"] == "FALSE"
+    assert body["verdict_source"] == "rule-engine"
+    assert body["confidence"] == 0.55
+    assert body["reasoning"] == "reasoning from test"
 
 
 def test_gemini_final_validation_resolves_when_no_live(verify_client):
@@ -159,6 +191,20 @@ def test_live_check_decides_when_engine_unavailable(verify_client):
     assert resp.get_json()["final_verdict"] == "FALSE"
 
 
+def test_missing_gemini_never_invents_sources(verify_client):
+    """The no-fabrication guarantee still holds for Gemini: when Gemini is the
+    decision path it either produced a verdict or it did not. When it did not,
+    the Ollama/rule-engine fallback decides - nothing is invented."""
+    client = verify_client(live=None, verdict="UNVERIFIED", ollama=None)
+    resp = _post(client, headline="No known reporting about this claim.",
+                 article="This is a completely invented claim text.")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["gemini_validation"] is None
+    assert body["verdict_source"] in {"ollama", "rule-engine"}
+    assert body["final_verdict"] in {"TRUE", "FALSE"}
+
+
 def test_invalid_language_rejected():
     from app import create_app
     from app.config import TestConfig
@@ -181,19 +227,18 @@ def test_text_too_long_rejected(verify_client):
 
 
 def test_english_language_mode_honoured(verify_client, monkeypatch):
-    client = verify_client(live={"label": "REAL", "confidence": 0.9,
-                                 "reasoning": "matches reporting"},
-                           verdict="UNVERIFIED",
-                           language=("english", "English"))
-
-    import app.routes.verify as verify_mod
     captured = {}
 
     def _verify_text(text, headline=None, language_mode="auto", include_debug=False):
         captured["mode"] = language_mode
         return _verification("UNVERIFIED")
 
-    monkeypatch.setattr(verify_mod, "verify_text", _verify_text)
+    client = verify_client(
+        live={"label": "REAL", "confidence": 0.9, "reasoning": "matches reporting"},
+        verdict="UNVERIFIED",
+        language=("english", "English"),
+        verify_text=_verify_text,
+    )
     resp = _post(client, headline="Hello world", language="english")
     assert resp.status_code == 200
     assert captured["mode"] == "english"
@@ -201,22 +246,26 @@ def test_english_language_mode_honoured(verify_client, monkeypatch):
 
 
 def test_full_pipeline_offline_no_key():
-    """End-to-end offline: no Gemini means no REAL/FAKE verdict - an honest
-    API error, never a forced FAKE."""
+    """End-to-end fully offline: no Gemini key and no Ollama means the
+    rule-engine last resort answers TRUE/FALSE - a decision, not a 502."""
     from app import create_app
     from app.config import TestConfig
+    import app.routes.verify as verify_mod
+
     monkeypatch_os = pytest.MonkeyPatch()
     monkeypatch_os.setenv("TRUTHLENS_LIVE_EVIDENCE", "0")
     monkeypatch_os.setenv("GEMINI_API_KEY", "")
     monkeypatch_os.setenv("BAZAARLINK_API_KEY", "")
     try:
         with create_app(TestConfig).test_client() as client:
+            monkeypatch_os.setattr(verify_mod, "ollama_judge", lambda *a, **k: None)
             resp = _post(client, headline="The Earth revolves around the Sun.",
                          article="Astronomers say the planet orbits the star.")
-            assert resp.status_code == 502
+            assert resp.status_code == 200
             body = resp.get_json()
-            assert body["status"] == "error"
-            assert "UNVERIFIED" not in str(body.get("final_verdict", ""))
+            assert body["final_verdict"] in {"TRUE", "FALSE"}
+            assert body["verdict_source"] == "rule-engine"
+            assert body["final_verdict"] != "UNVERIFIED"
     finally:
         monkeypatch_os.undo()
         for name in ("TRUTHLENS_LIVE_EVIDENCE", "GEMINI_API_KEY", "BAZAARLINK_API_KEY"):

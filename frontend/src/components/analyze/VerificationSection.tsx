@@ -477,6 +477,22 @@ export function VerificationSection({ verification }: { verification: Verificati
                   ? `${verification.gemini_validation.confidence_score}%`
                   : `${Math.round(verification.gemini_validation.confidence * 100)}%`}
               </p>
+              {["HIGH", "MEDIUM", "LOW", "VERY_LOW"].includes(
+                verification.gemini_validation.evidence_strength || "",
+              ) && (
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                    verification.gemini_validation.evidence_strength === "HIGH"
+                      ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+                      : verification.gemini_validation.evidence_strength === "MEDIUM"
+                        ? "bg-sky-50 text-sky-700 dark:bg-sky-950/50 dark:text-sky-300"
+                        : "bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300",
+                  )}
+                >
+                  Evidence: {verification.gemini_validation.evidence_strength}
+                </span>
+              )}
               {verification.gemini_validation.initial_model_verdict &&
                 verification.gemini_validation.initial_model_verdict !== "n/a" && (
                   <span
@@ -509,6 +525,21 @@ export function VerificationSection({ verification }: { verification: Verificati
               <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-300">
                 {verification.gemini_validation.reasoning || "No reasoning returned."}
               </p>
+              {verification.gemini_validation.limitations &&
+                verification.gemini_validation.limitations.length > 0 && (
+                  <div className="mt-2 flex flex-col gap-1 rounded border border-amber-200 bg-amber-50/60 px-2 py-1.5 dark:border-amber-900/50 dark:bg-amber-950/30">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                      Limitations
+                    </p>
+                    <ul className="flex flex-col gap-1">
+                      {verification.gemini_validation.limitations.slice(0, 4).map((lim, i) => (
+                        <li key={i} className="text-[11px] text-amber-800 dark:text-amber-200">
+                          {lim}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               {verification.gemini_validation.key_claims_verified &&
                 verification.gemini_validation.key_claims_verified.length > 0 && (
                   <div className="mt-3">

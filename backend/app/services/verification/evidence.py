@@ -6,7 +6,8 @@ Priority sources (all configurable; every one fails gracefully):
 2. Wikipedia / Tamil Wikipedia     (keyless, full-page extracts)
 3. Google Fact Check Tools API     (needs FACT_CHECK_API_KEY)
 4. NewsAPI                         (needs NEWSAPI_KEY; snippets only)
-5. Gemini                          (needs GEMINI_API_KEY; LLM reference)
+5. GDELT                           (keyless, free, ~15-min latency news)
+6. Gemini                          (needs GEMINI_API_KEY; LLM reference)
 
 If live sources are unavailable the function returns whatever it found; an
 empty list tells the verdict engine that evidence was insufficient.
@@ -174,6 +175,37 @@ def _newsapi(query: str) -> list[dict]:
     return items
 
 
+def _gdelt(query: str) -> list[dict]:
+    url = ("https://api.gdeltproject.org/api/v2/doc/doc"
+           f"?query={urllib.parse.quote(query)}&mode=artlist&maxrecords=15"
+           f"&format=json&sort=hybridrel")
+    data = _http_json(url)
+    items = []
+    if not data:
+        return items
+    for article in (data.get("articles") or [])[:4]:
+        url_article = article.get("url", "")
+        if not url_article:
+            continue
+        seen = article.get("seendate") or ""
+        date = None
+        if len(seen) >= 8:
+            date = f"{seen[:4]}-{seen[4:6]}-{seen[6:8]}"
+        items.append({
+            "source_name": article.get("domain") or _domain_from_url(url_article),
+            "domain": article.get("domain") or _domain_from_url(url_article),
+            "title": article.get("title", ""),
+            "snippet": article.get("title", "")[:300],
+            "text": article.get("title", ""),
+            "url": url_article,
+            "date": date,
+            "retrieved_from": "gdelt",
+            "language": article.get("language", "en")[:2] or "en",
+            "has_full_text": False,
+        })
+    return items
+
+
 def _gemini_reference(claim: str) -> list[dict]:
     key = os.environ.get("GEMINI_API_KEY", "")
     if not key:
@@ -272,15 +304,17 @@ def retrieve_evidence_claim(claim: dict, query: str, language_code: str) -> list
             return []
 
     if LIVE_EVIDENCE_ENABLED:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
             wiki_future = pool.submit(_run_retriever, lambda: _wikipedia_search(query, language_code))
             factcheck_future = pool.submit(_run_retriever, lambda: _factcheck(query))
             news_future = pool.submit(_run_retriever, lambda: _newsapi(query))
+            gdelt_future = pool.submit(_run_retriever, lambda: _gdelt(query))
             gemini_future = pool.submit(_run_retriever, lambda: _gemini_reference(claim_text))
 
             items.extend(wiki_future.result())
             items.extend(news_future.result())
             items.extend(factcheck_future.result())
+            items.extend(gdelt_future.result())
             items.extend(gemini_future.result())
 
         # fetch Wikipedia full text extracts (gives the relevance scorer real content)
