@@ -126,6 +126,10 @@ def test_groq_fallback_labels_source(verify_client):
     assert body["final_verdict"] == "FALSE"
     assert body["verdict_source"] == "groq"
     assert "Groq" in body["fallback_note"]
+    overall = body["verification"]["overall"]
+    assert overall["verdict"] == "FALSE"
+    assert overall["confidence"] == 0.7
+    assert overall["confidence_label"] == "Moderate confidence"
 
 
 def test_ollama_fallback_judges_evidence(verify_client):

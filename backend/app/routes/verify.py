@@ -24,6 +24,7 @@ from flask import Blueprint, jsonify, request
 
 from ..services.live_check import live_news_check
 from ..services.llm_check import cloud_ai_judge
+from ..services.verification.scoring import _confidence_label
 from ..services.ollama_check import ollama_judge
 from ..services.verification_service import run_verification
 from ..services.verification.language import VALID_MODES
@@ -253,6 +254,38 @@ def verify():
             "is only a suggestion shown next to the verdict."
         ),
     }
+
+    verification = verification or {}
+
+    # Keep the embedded verification.overall and per-claim surfaces consistent
+    # with the AI final verdict (confidence label/counts were built pre-AI).
+    _final_label = _VERDICT_MAP.get(verdict, "UNKNOWN")
+    _final_conf = confidence_value or 0.0
+    _overall = verification.get("overall")
+    if _overall:
+        _overall["verdict"] = _final_label
+        _overall["confidence"] = _final_conf
+        _overall["confidence_label"] = _confidence_label(_final_conf)
+        _overall["explanation"] = reasoning_value or _overall.get("explanation", "")
+        _overall["mixed"] = False
+        _counts = _overall.get("counts") or {}
+        _claims = verification.get("claims", []) or []
+        _counts.update({
+            "total_claims": len(_claims),
+            "real": len([c for c in _claims if c.get("verdict") == "REAL"]),
+            "false": len([c for c in _claims if c.get("verdict") == "FALSE"]),
+            "unverified": 0,
+        })
+        _overall["counts"] = _counts
+    for _c in verification.get("claims", []) or []:
+        if not from_engine:
+            _c["verdict"] = _final_label
+        _c["final_verdict"] = _final_label
+        _c["final_confidence"] = _final_conf
+        if source:
+            _c["final_authority"] = _CLOUD_LABELS.get(source, source) + " (AI)"
+    for _item in verification.get("evidence_matrix", []) or []:
+        _item["claim_verdict"] = _final_label
 
     return jsonify(
         {

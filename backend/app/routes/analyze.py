@@ -9,6 +9,7 @@ from ..services.analyzer import analyze, analyze_headline_only
 from ..services.live_check import live_news_check
 from ..services.llm_check import cloud_ai_judge
 from ..services.ollama_check import ollama_judge
+from ..services.verification.scoring import _confidence_label
 from .verify import _evidence_digest
 
 bp = Blueprint("analyze", __name__, url_prefix="/api")
@@ -93,8 +94,17 @@ def _apply_ai_final(body: dict, ai_verdict: dict | None) -> None:
     if overall:
         overall["verdict"] = label
         overall["confidence"] = confidence
+        overall["confidence_label"] = _confidence_label(confidence)
         overall["explanation"] = reasoning or overall.get("explanation", "")
         overall["mixed"] = False
+        counts = overall.get("counts") or {}
+        counts.update({
+            "total_claims": len(verification.get("claims", []) or []),
+            "real": len([c for c in (verification.get("claims", []) or []) if c.get("verdict") == "REAL"]),
+            "false": len([c for c in (verification.get("claims", []) or []) if c.get("verdict") == "FALSE"]),
+            "unverified": 0,
+        })
+        overall["counts"] = counts
     for claim in verification.get("claims", []) or []:
         claim["verdict"] = label
         claim["final_verdict"] = label
