@@ -268,15 +268,6 @@ def verify():
         _overall["confidence_label"] = _confidence_label(_final_conf)
         _overall["explanation"] = reasoning_value or _overall.get("explanation", "")
         _overall["mixed"] = False
-        _counts = _overall.get("counts") or {}
-        _claims = verification.get("claims", []) or []
-        _counts.update({
-            "total_claims": len(_claims),
-            "real": len([c for c in _claims if c.get("verdict") == "REAL"]),
-            "false": len([c for c in _claims if c.get("verdict") == "FALSE"]),
-            "unverified": 0,
-        })
-        _overall["counts"] = _counts
     for _c in verification.get("claims", []) or []:
         if not from_engine:
             _c["verdict"] = _final_label
@@ -284,6 +275,16 @@ def verify():
         _c["final_confidence"] = _final_conf
         if source:
             _c["final_authority"] = _CLOUD_LABELS.get(source, source) + " (AI)"
+    if _overall:
+        _claims = verification.get("claims", []) or []
+        _counts = _overall.get("counts") or {}
+        _counts.update({
+            "total_claims": len(_claims),
+            "real": len([c for c in _claims if c.get("verdict") == "REAL"]),
+            "false": len([c for c in _claims if c.get("verdict") == "FALSE"]),
+            "unverified": 0,
+        })
+        _overall["counts"] = _counts
     for _item in verification.get("evidence_matrix", []) or []:
         _item["claim_verdict"] = _final_label
 

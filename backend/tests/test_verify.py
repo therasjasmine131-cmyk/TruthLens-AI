@@ -132,6 +132,25 @@ def test_groq_fallback_labels_source(verify_client):
     assert overall["confidence_label"] == "Moderate confidence"
 
 
+def test_groq_fallback_recounts_claims_to_match_verdict(verify_client):
+    """After a cloud verdict, overall counts reflect the AI labels (no stale
+    Unverified claims shown next to a Real/Fake verdict)."""
+    client = verify_client(
+        live=None, verdict="REAL",
+        cloud={"source": "groq", "label": "FAKE", "confidence": 0.7,
+               "reasoning": "evidence contradicts the claim"},
+    )
+    resp = _post(client, headline="Widget Corp invented warp drive.")
+    body = resp.get_json()
+    assert body["final_verdict"] == "FALSE"
+    counts = body["verification"]["overall"]["counts"]
+    assert counts["real"] == 0
+    assert counts["false"] == 1
+    assert counts["unverified"] == 0
+    assert counts["total_claims"] == 1
+    assert body["verification"]["claims"][0]["verdict"] == "FALSE"
+
+
 def test_ollama_fallback_judges_evidence(verify_client):
     """Gemini unavailable but Ollama IS reachable: Ollama judges the SAME
     gathered evidence and the endpoint returns its verdict."""

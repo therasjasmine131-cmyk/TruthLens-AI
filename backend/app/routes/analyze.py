@@ -97,6 +97,12 @@ def _apply_ai_final(body: dict, ai_verdict: dict | None) -> None:
         overall["confidence_label"] = _confidence_label(confidence)
         overall["explanation"] = reasoning or overall.get("explanation", "")
         overall["mixed"] = False
+    for claim in verification.get("claims", []) or []:
+        claim["verdict"] = label
+        claim["final_verdict"] = label
+        claim["final_authority"] = authority
+        claim["final_confidence"] = confidence
+    if overall:
         counts = overall.get("counts") or {}
         counts.update({
             "total_claims": len(verification.get("claims", []) or []),
@@ -105,11 +111,6 @@ def _apply_ai_final(body: dict, ai_verdict: dict | None) -> None:
             "unverified": 0,
         })
         overall["counts"] = counts
-    for claim in verification.get("claims", []) or []:
-        claim["verdict"] = label
-        claim["final_verdict"] = label
-        claim["final_authority"] = authority
-        claim["final_confidence"] = confidence
     for item in verification.get("evidence_matrix", []) or []:
         item["claim_verdict"] = label
 
