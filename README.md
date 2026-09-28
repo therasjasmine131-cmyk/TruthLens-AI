@@ -1,70 +1,78 @@
-# TruthLens AI
+# TruthLens AI — Fake News Detection System
 
-Hybrid fact-checking tool that combines a trained neural network (Embedding →
-BiGRU) with an evidence-based verification engine. For every submitted article
-it returns a classifier prediction (`REAL` / `FAKE`) **and** an explainable
-evidence verdict (`REAL` / `FALSE` / `UNVERIFIED`) backed by retrieved sources,
-claim decomposition, and a curated knowledge base.
-
-Demo data, verification pipeline, and trained model are all local — no external
-calls are required for the evidence engine's knowledge-base mode.
+AI-first fake-news detection. A trained **Neural Network (Embedding → BiGRU)** reads the article and predicts `REAL` / `FAKE`, while an **evidence-based verification engine** decomposes it into atomic claims, retrieves real news sources, and produces an explainable evidence verdict (`REAL` / `FALSE` / `UNVERIFIED`) — finished off by a **free cloud-AI judge** (Gemini → Groq → OpenRouter → ChatGPT → Ollama) so the app **never breaks and never fabricates a verdict** when a provider is offline.
 
 ## How it works
 
 ```
 article text (+ headline)
         │
-        ├── NN CLASSIFIER ─────────────────► REAL / FAKE / UNCERTAIN (+probabilities)
-        │     Embedding → BiGRU (trained with PyTorch, runs on pure NumPy)
+        ├── NN CLASSIFIER ───────────────► REAL / FAKE / UNCERTAIN (+ probabilities)
+        │     Embedding → BiGRU (PyTorch-trained, runs on pure NumPy)
         │
-        └── VERIFICATION ENGINE ──────────► evidence verdict + full report
+        └── VERIFICATION ENGINE ────────► evidence verdict + full report
               1. decompose article into atomic claims (opinion / prediction
                  handling, Tamil & Tanglish language detection)
-              2. retrieve evidence  (knowledge base + optional live sources)
+              2. retrieve evidence  (knowledge base + live web search:
+                 Google News RSS / Bing News / DuckDuckGo — keyless)
               3. relevance scoring + source tiering + cross-source checks
               4. per-claim verdict  (SUPPORTS / CONTRADICTS / NEUTRAL)
-              5. overall verdict      (REAL / FALSE / UNVERIFIED)
+              5. AI judge passes the final verdict chain:
+                 Gemini → Groq → OpenRouter → ChatGPT → Ollama
+              6. overall verdict  (REAL / FALSE / UNVERIFIED)
 ```
 
-Verdicts are only asserted when evidence actually supports them — otherwise the
-engine honestly returns `UNVERIFIED` (no fabricated "correct-looking" answers).
-`FALSE` (evidence verdict) is the same class as `FAKE` (classifier prediction).
+- **Never fabricates:** if no provider can decide, the API honestly returns
+  `ai_unavailable` with the evidence verdict intact — no invented "correct-looking"
+  answers.
+- **Live evidence:** the evidence engine pulls real headlines from free
+  news RSS (Google News, Bing News, DuckDuckGo) so the AI judge is grounded in
+  actual reporting — even when every paid API key is missing.
+- `FALSE` (evidence verdict) is the same class as `FAKE` (classifier prediction).
 
-## Repository layout
+## Features
 
-```
-backend/                Flask API (analyze, batch, history, settings, ...)
-  app/ml/               model loading wrapper (model_manager)
-  app/services/         analyzer, explainer, verification_service
-  app/services/verification/  evidence engine modules
-  tests/                pytest suite
-  static/               built frontend (copied from frontend/dist)
-frontend/               React + Vite + Tailwind UI
-ml/                     training + evaluation pipeline (train, dataset, ...)
-  nn_tokenize.py, nn_forward.py   vocabulary + pure-NumPy BiGRU inference
-  data/                 1,200-row sample dataset (ISOT-derived)
-models/                 exported runtime model
-  fake_news_neural_network/  weights.npz, vocab.json, config.json, metrics.json
-DEPLOYMENT.md, .env.example   deployment notes & configuration
-```
+- **Neural classifier** — Embedding → BiGRU trained on the ISOT dataset; exported
+  to run purely on NumPy (no PyTorch required at runtime)
+- **Claim decomposition** — conjoined claims, opinion/prediction marking,
+  attribution stripping, negation and numerical handling, temporal reasoning
+- **Evidence engine** — knowledge base + keyless live news search, relevance
+  scoring, source tiering, cross-source agreement checks
+- **AI final verdict** — Gemini → Groq → OpenRouter → ChatGPT → Ollama chain,
+  with a healthy confidence label (`High / Medium / Low`) and per-claim recounts
+- **Explainability** — token influence, evidence matrix, per-claim verdicts, and
+  a generated report per article
+- **Extra detectors** — AI-text detection, Trending News feed, batch analysis,
+  model performance dashboard (confusion matrix, ROC, precision/recall/F1)
+- **Clean responsive UI** — React 18 + Vite + TypeScript + Tailwind CSS,
+  interactive charts via Recharts
 
-## Quick start
+## Tech Stack
+
+- **Backend:** Python 3.11, Flask 3.x, NumPy (BiGRU runtime), optional PyTorch
+  (training only)
+- **ML:** Embedding + BiGRU, ISOT-derived dataset (`ml/data/`), pure-NumPy
+  forward pass (`ml/nn_forward.py`)
+- **Frontend:** React 18, Vite 5, TypeScript, Tailwind CSS, Recharts
+- **Testing:** pytest (backend), Vitest + Testing Library (frontend)
+- **Deploy:** Vercel serverless (single Python service, `api/index.py`)
+
+## Getting Started
 
 ### 1. Train the model (one-time)
 
 ```powershell
 pip install -r requirements-train.txt   # includes PyTorch (CPU)
-python ml/train.py                      # trains/fine-tunes the BiGRU and exports models/fake_news_neural_network/
+python ml/train.py                      # trains the BiGRU and exports models/
 ```
 
-The command-line defaults target the full ISOT dataset (`ml/data/raw/`). Use
-`python ml/train.py --sample --epochs 2` for a quick smoke run on the bundled
+Use `python ml/train.py --sample --epochs 2` for a quick smoke run on the bundled
 1,200-row sample.
 
 ### 2. Run the backend
 
 ```powershell
-Copy-Item .env.example .env   # then edit values (leave API keys blank for offline mode)
+Copy-Item .env.example .env   # then edit values (API keys optional — offline mode works)
 python backend/run.py         # http://localhost:5000
 ```
 
@@ -75,53 +83,94 @@ Health check: `GET http://localhost:5000/api/health`
 ```powershell
 cd frontend
 npm install
-npm run dev                   # http://localhost:5173 (VITE_API_URL empty = same origin)
+npm run dev                   # http://localhost:5173
 ```
 
-For production, build and serve from the backend:
+## Command return shape (clean AI contract on `POST /api/analyze/headline`)
 
-```powershell
-cd frontend
-npm run build                 # outputs frontend/dist
-Copy-Item -Recurse dist\* ..\backend\static\
+```json
+{
+  "overall": {
+    "verdict": "REAL",
+    "confidence": 0.95,
+    "confidence_label": "High confidence",
+    "counts": { "real": 1, "false": 0, "unverified": 0, "total_claims": 1 },
+    "sources": ["web-search"],
+    "verdict_reason": "evidence + AI-chain support the claim"
+  },
+  "claims": [{ "text": "...", "verdict": "REAL", "evidence": [...] }],
+  "evidence": [...],
+  "stats": { "processing_time_ms": 2300, "ai_provider": "groq" },
+  "success": true
+}
 ```
 
-## Evaluation
+## API Endpoints
 
-```powershell
-python ml/train.py                     # prints train/val/test metrics + NumPy-vs-torch parity check
-python ml/evaluate_claims.py           # evidence engine on curated knowledge-base claims
-```
-
-Latest results (on the full ISOT training run — see `models/fake_news_neural_network/metrics.json` for the deployed model):
-
-| Check | Result |
+| Endpoint | Description |
 |---|---|
-| Neural network (test split) | see metrics.json (model_manager /api/model-perf reports live) |
-| Evidence engine (curated claims) | 12/12 = 100% |
+| `POST /api/analyze` | Full article analysis (NN + evidence + AI verdict) |
+| `POST /api/analyze/headline` | Headline-only analysis (same engine, `"headline"` field) |
+| `POST /api/verify` | Evidence verification endpoint (final verdict chain) |
+| `POST /api/batch/analyze` | Batch analysis of multiple articles |
+| `POST /api/detect-ai-text` | AI-text / AI-generated-content detection |
+| `GET /api/news/trending` | Trending news feed |
+| `GET /api/history` · `GET /api/history/export` | Saved analyses + export |
+| `GET /api/history/report/<id>` | Generated per-article PDF-style report |
+| `GET /api/model-performance` | Confusion matrix, ROC, precision/recall/F1 |
+| `GET /api/analytics` | Aggregate statistics |
+| `GET /api/dataset/stats` · `GET /api/dataset/samples` | Dataset explorer |
+| `GET /api/settings` · `PUT /api/settings` | Runtime configuration |
+| `GET /api/health` | Health + capability probe |
 
-## Tests
+## Serverless (Vercel)
+
+`api/index.py` + `vercel.json` deploy the whole app (API + built SPA) as a single
+serverless Python function:
 
 ```powershell
-python -m pytest backend/tests -q     # backend (64 tests)
-cd frontend; npm test                  # frontend (26 tests)
+npx vercel --prod
 ```
 
-## Configuration (`.env`)
+Set the optional provider keys in the Vercel project's Environment Variables
+(`GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY`) — the
+app works fine without them (offline evidence + `ai_unavailable` verdict).
+Note: the Hobby-tier function timeout is capped at 60 s (`maxDuration`).
 
-| Variable | Purpose |
-|---|---|
-| `NN_MODEL_DIR` | exported model location (default `models/fake_news_neural_network`) |
-| `DATASET_RAW_DIR` | full ISOT CSVs for retraining (`ml/data/raw/`) |
-| `TRUTHLENS_LIVE_EVIDENCE` | set `0` to force knowledge-base-only mode |
-| `FACT_CHECK_API_KEY` / `NEWSAPI_KEY` / `GEMINI_API_KEY` | optional live evidence + AI-text backends; when unset, the app gracefully falls back to offline heuristics |
+## Project Structure
 
-See `.env.example` and `DEPLOYMENT.md` for full details.
+```
+├── api/index.py                # Vercel serverless entry (Flask app)
+├── backend/                    # Flask API
+│   ├── app/
+│   │   ├── routes/             # analyze, verify, batch, history, news, ...
+│   │   ├── services/           # analyzer, llm_check, web_search, verifier
+│   │   │   └── verification/   # evidence engine modules (claims, scoring, ...)
+│   │   ├── ml/model_manager.py # NumPy inference wrapper
+│   │   └── config.py
+│   ├── run.py                  # local dev server
+│   └── tests/                  # pytest suite (hermetic, offline)
+├── frontend/                   # React + Vite + Tailwind + TS UI
+├── ml/                         # training pipeline (train, dataset, nn_forward)
+├── models/                     # exported BiGRU runtime (weights.npz, vocab.json)
+├── PROJECT_ABSTRACT.txt
+├── .env.example
+├── requirements.txt            # runtime deps (NumPy-only inference)
+└── vercel.json
+```
 
-## Links
+## Testing
 
-- Live app (Vercel serverless): https://truthlens-ai-prod.vercel.app
-- Repository: https://github.com/therasjasmine131-cmyk/TruthLens-AI
-- Deployment: see `DEPLOYMENT.md`. Hosted as a single Vercel Python service
-  (entrypoint `api/index.py`, Flask serves both the API and the built SPA);
-  the DB is in-memory (ephemeral) on the serverless tier.
+```powershell
+python -m pytest backend/tests -q   # 93 tests, hermetic (no network)
+cd frontend; npm test               # 29 tests (Vitest + Testing Library)
+```
+
+## Sample Text to Try
+
+> "Scientists have confirmed that the first McDonald's restaurant on Mars opened
+> its doors to astronauts this week, serving zero-gravity cheeseburgers."
+
+## License
+
+College mini project — free to use for educational purposes.

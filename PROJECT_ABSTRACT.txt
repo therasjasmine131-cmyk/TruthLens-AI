@@ -1,0 +1,38 @@
+PROJECT TITLE: TRUTHLENS AI - FAKE NEWS DETECTION SYSTEM
+
+ABSTRACT
+
+In the digital era, misinformation spreads across social media and news platforms at
+unprecedented speed, eroding public trust and enabling harmful consequences ranging
+from public panic to electoral manipulation. Detecting and categorizing fake news has
+therefore become an urgent and essential challenge for individuals, journalists, and
+platform providers alike.
+
+TruthLens AI is proposed as a robust and explainable fake-news detection system that
+combines the power of deep learning with rigorous, evidence-based verification. At its
+core lies a trained neural network — an Embedding layer feeding a Bidirectional Gated
+Recurrent Unit (BiGRU) — which reads the submitted news article and produces an
+initial classification of REAL or FAKE along with confidence probabilities. Because a
+purely statistical classifier alone is not sufficient to earn trust, TruthLens AI
+augments this prediction with a comprehensive verification engine that decomposes the
+article into atomic claims, cross-references each claim against a curated knowledge
+base and live news sources retrieved from free keyless RSS feeds (Google News,
+Bing News, and DuckDuckGo), scores relevance, tiers the credibility of sources, and
+finally issues an evidence-based verdict of REAL, FALSE, or UNVERIFIED. A free
+cloud-based AI judge — chained across Gemini, Groq, OpenRouter, ChatGPT, and Ollama —
+reviews the assembled evidence and delivers a final verdict that is always grounded in
+the retrieved sources and is never fabricated when no provider can decide.
+
+The system is engineered as a production-ready web application: a Python Flask backend
+serves a comprehensive REST API, while a responsive React 18 frontend built with Vite,
+TypeScript, Tailwind CSS, and Recharts presents the classification results,
+explainability data, evidence matrices, and model-performance dashboards in a clean,
+user-friendly interface. The architecture is fully modular and deployable on Vercel as
+a serverless function, providing real-time fact-checking with a high-confidence final
+verdict, per-claim transparency with retrieved citations, an honest UNVERIFIED
+response when evidence is insufficient, and graceful offline operation that never
+relies on paid API keys.
+
+TruthLens AI demonstrates a practical and trustworthy approach to automated
+misinformation detection, pairing neural classification with transparent,
+source-backed reasoning to help users identify falsehoods quickly and confidently.
